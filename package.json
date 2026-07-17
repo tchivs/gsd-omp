@@ -1,0 +1,44 @@
+{
+  "name": "gsd-omp",
+  "version": "1.0.0",
+  "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System",
+  "license": "MIT",
+  "author": "tchivs",
+  "type": "commonjs",
+  "bin": {
+    "gsd-omp": "bin/gsd-omp.cjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "lint": "node --check bin/gsd-omp.cjs && node --check src/eos.cjs && node --check src/extension.cjs && node --check src/gsd-graphify-worker.cjs && node --check src/projection.cjs",
+    "test": "node --test",
+    "prepack": "npm run lint && npm test"
+  },
+  "dependencies": {
+    "@opengsd/gsd-core": "^1.7.0"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "gsd": ">=1.7.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tchivs/gsd-omp.git"
+  },
+  "homepage": "https://github.com/tchivs/gsd-omp#readme",
+  "bugs": {
+    "url": "https://github.com/tchivs/gsd-omp/issues"
+  },
+  "keywords": [
+    "gsd",
+    "omp",
+    "oh-my-pi",
+    "eos",
+    "host-plugin"
+  ]
+}

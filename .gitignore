@@ -1,0 +1,4 @@
+node_modules/
+*.tgz
+coverage/
+.DS_Store
