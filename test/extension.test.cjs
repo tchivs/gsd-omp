@@ -55,3 +55,41 @@ function mockPi() {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('uses OMP-managed timers for gsd_invoke progress updates', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-managed-timer-'));
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const timer = {};
+    let scheduled;
+    let cleared;
+    let updates = 0;
+    const ctx = {
+      cwd: root,
+      setInterval(callback, milliseconds) {
+        scheduled = { callback, milliseconds };
+        return timer;
+      },
+      clearTimer(handle) {
+        cleared = handle;
+      },
+    };
+
+    const result = await pi.tools.get('gsd_invoke').execute(
+      'tool-call',
+      { family: 'query', subcommand: 'help', args: [] },
+      new AbortController().signal,
+      () => { updates += 1; },
+      ctx,
+    );
+
+    assert.equal(typeof scheduled.callback, 'function');
+    assert.equal(scheduled.milliseconds, 250);
+    assert.equal(cleared, timer);
+    assert.equal(updates, 1);
+    assert.equal(Array.isArray(result.content), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
