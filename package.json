@@ -1,7 +1,7 @@
 {
   "name": "gsd-omp",
   "version": "1.0.0",
-  "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System",
+  "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System — extension bindings, slash-command surface, and Host-Integration SDK adapter for AI coding agents",
   "license": "MIT",
   "author": "tchivs",
   "type": "commonjs",
@@ -39,6 +39,16 @@
     "omp",
     "oh-my-pi",
     "eos",
-    "host-plugin"
+    "host-plugin",
+    "orchestration",
+    "embeddable",
+    "cli",
+    "plugin",
+    "agent-orchestration",
+    "ai-agent",
+    "llm",
+    "coding-agent",
+    "developer-tools",
+    "automation"
   ]
 }

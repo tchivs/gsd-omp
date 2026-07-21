@@ -1,4 +1,11 @@
 # GSD for Oh My Pi
+[![Release](https://img.shields.io/github/v/release/tchivs/gsd-omp?logo=github&label=release)](https://github.com/tchivs/gsd-omp/releases)
+[![License: MIT](https://img.shields.io/github/license/tchivs/gsd-omp?color=blue)](./LICENSE)
+[![Node.js](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org)
+[![GSD Core](https://img.shields.io/badge/gsd--core-%E2%89%A51.7.0-0066cc)](https://github.com/open-gsd/gsd-core)
+[![OMP EoS](https://img.shields.io/badge/OMP-EoS%20v1-6c31c4)](#eos-contract)
+[![Last Commit](https://img.shields.io/github/last-commit/tchivs/gsd-omp?logo=git&logoColor=white)](https://github.com/tchivs/gsd-omp/commits)
+[![Stars](https://img.shields.io/github/stars/tchivs/gsd-omp?style=social)](https://github.com/tchivs/gsd-omp/stargazers)
 
 `gsd-omp` is an independently maintained Oh My Pi host plugin for the [GSD Embeddable Orchestration System](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md). It binds OMP's native extension, command, event, task, and filesystem surfaces to GSD through protocol version 1 of the public Host-Integration SDK.
 
