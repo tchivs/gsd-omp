@@ -8,6 +8,7 @@ const path = require('node:path');
 const Eos = require('../src/eos.cjs');
 const { buildProjectedArtifacts } = require('../src/projection.cjs');
 const packageJson = require('../package.json');
+const { t } = require('../src/locale.cjs');
 
 const MANIFEST_NAME = '.gsd-omp-manifest.json';
 
@@ -26,9 +27,9 @@ function parseArgs(argv) {
     if (arg === '--force') force = true;
     else if (arg === '--json') json = true;
     else if (arg === '--root') {
-      if (!args.length) throw new Error('--root requires a path');
+      if (!args.length) throw new Error(t('cli.error.rootRequiresPath'));
       root = path.resolve(args.shift());
-    } else throw new Error(`Unknown argument: ${arg}`);
+    } else throw new Error(t('cli.error.unknownArgument', { arg }));
   }
   return { command, root, force, json };
 }
@@ -46,7 +47,7 @@ function readManifest(root) {
     return JSON.parse(fs.readFileSync(manifestPath(root), 'utf8'));
   } catch (error) {
     if (error.code === 'ENOENT') return null;
-    throw new Error(`Cannot read ${manifestPath(root)}: ${error.message}`);
+    throw new Error(t('cli.error.cannotReadManifest', { path: manifestPath(root), message: error.message }));
   }
 }
 
@@ -74,7 +75,7 @@ function assertSupportedCore(coreRoot) {
   const corePackage = JSON.parse(fs.readFileSync(path.join(coreRoot, 'package.json'), 'utf8'));
   const match = String(corePackage.version || '').match(/^(\d+)\.(\d+)\.(\d+)/);
   if (!match || Number(match[1]) < 1 || (Number(match[1]) === 1 && Number(match[2]) < 7)) {
-    throw new Error(`gsd-omp requires @opengsd/gsd-core >=1.7.0; found ${corePackage.version || 'unknown'}`);
+    throw new Error(t('cli.error.unsupportedCore', { version: corePackage.version || 'unknown' }));
   }
   return corePackage.version;
 }
@@ -108,7 +109,7 @@ function install({ root: rootOverride, force = false } = {}) {
     const currentHash = sha256(fs.readFileSync(target));
     const priorHash = previousFiles.get(artifact.relativePath);
     if (!force && currentHash !== priorHash) {
-      throw new Error(`Refusing to overwrite unmanaged or modified file: ${target} (rerun with --force to replace GSD-owned projections)`);
+      throw new Error(t('cli.error.refusingOverwrite', { path: target }));
     }
   }
 
@@ -205,9 +206,9 @@ function main(argv = process.argv.slice(2)) {
   else if (options.command === 'doctor') result = doctor(options);
   else if (options.command === 'descriptor') result = descriptor();
   else if (options.command === 'help' || options.command === '--help') {
-    print('Usage: gsd-omp [install|uninstall|doctor|descriptor] [--root <path>] [--force] [--json]', false);
+    print(t('cli.usage'), false);
     return 0;
-  } else throw new Error(`Unknown command: ${options.command}`);
+  } else throw new Error(t('cli.error.unknownCommand', { command: options.command }));
   print(result, options.json);
   return options.command === 'doctor' && !result.ok ? 1 : 0;
 }

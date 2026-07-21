@@ -6,6 +6,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { doctor, install, uninstall } = require('../bin/gsd-omp.cjs');
+// Pin locale to English so the ownership-error regex stays deterministic
+// regardless of the dev shell's LANG.
+require('../src/locale.cjs').setLocale('en');
 
 function temporaryRoot(name) {
   return fs.mkdtempSync(path.join(os.tmpdir(), `${name}-`));

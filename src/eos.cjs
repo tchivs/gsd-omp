@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { t } = require('./locale.cjs');
 
 const OMP_AXES = Object.freeze({
   embeddingMode: 'imperative',
@@ -41,10 +42,10 @@ function initialize() {
   const negotiation = SDK.handleHandshakeRequest(request);
   const profile = SDK.profileOf(negotiation.effective);
   if (profile !== 'programmatic-cli') {
-    throw new Error(`gsd-omp: EoS negotiation produced ${JSON.stringify(profile)}, expected programmatic-cli`);
+    throw new Error(t('eos.error.unexpectedProfile', { profile: JSON.stringify(profile) }));
   }
   if (negotiation.protocolVersion < 1) {
-    throw new Error(`gsd-omp: unsupported EoS protocol ${JSON.stringify(negotiation.protocolVersion)}`);
+    throw new Error(t('eos.error.unsupportedProtocol', { version: JSON.stringify(negotiation.protocolVersion) }));
   }
 
   cached = Object.freeze({

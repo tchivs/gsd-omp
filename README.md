@@ -7,6 +7,8 @@
 [![Last Commit](https://img.shields.io/github/last-commit/tchivs/gsd-omp?logo=git&logoColor=white)](https://github.com/tchivs/gsd-omp/commits)
 [![Stars](https://img.shields.io/github/stars/tchivs/gsd-omp?style=social)](https://github.com/tchivs/gsd-omp/stargazers)
 
+**English** · [简体中文](./README.zh-CN.md)
+
 `gsd-omp` is an independently maintained Oh My Pi host plugin for the [GSD Embeddable Orchestration System](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md). It binds OMP's native extension, command, event, task, and filesystem surfaces to GSD through protocol version 1 of the public Host-Integration SDK.
 
 This project is third-party software. It is not endorsed, reviewed, or maintained by OpenGSD.
@@ -75,8 +77,27 @@ Remove managed OMP artifacts before removing the package that owns the installer
 gsd-omp uninstall
 npm uninstall --global gsd-omp
 ```
-
 Modified managed files are preserved and reported. Pass `--force` only when they should be deleted.
+
+## Locale
+
+The host CLI (`gsd-omp install|uninstall|doctor|descriptor`) and EoS bootstrap messages localize through the POSIX environment, resolved in this order:
+
+1. `GSD_OMP_LOCALE` — explicit override, takes precedence
+2. `LC_ALL`
+3. `LC_MESSAGES`
+4. `LANG`
+
+Any value whose lowercased form starts with `zh` (e.g. `zh_CN.UTF-8`, `zh_TW`) selects Simplified Chinese; everything else falls back to English. Unknown keys fall back to English, and unknown placeholders are left intact.
+
+```bash
+# force Chinese output regardless of shell locale
+GSD_OMP_LOCALE=zh_CN.UTF-8 gsd-omp doctor
+```
+
+Messages from the in-session OMP extension (`/gsd-*` commands, status widgets, continuations) are localized separately through the project's `response_language` field in `.planning/config.json`. The first time the extension loads in a GSD project without that field set, it offers a one-time `简体中文 / English` picker.
+
+Supported locales: `en` (default), `zh-CN`.
 
 ## EoS contract
 

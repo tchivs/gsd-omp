@@ -12,10 +12,11 @@
     "bin",
     "src",
     "README.md",
+    "README.zh-CN.md",
     "LICENSE"
   ],
   "scripts": {
-    "lint": "node --check bin/gsd-omp.cjs && node --check src/eos.cjs && node --check src/extension.cjs && node --check src/gsd-graphify-worker.cjs && node --check src/projection.cjs",
+    "lint": "node --check bin/gsd-omp.cjs && node --check src/eos.cjs && node --check src/extension.cjs && node --check src/gsd-graphify-worker.cjs && node --check src/locale.cjs && node --check src/locales/en.cjs && node --check src/locales/zh-CN.cjs && node --check src/projection.cjs",
     "test": "node --test",
     "prepack": "npm run lint && npm test"
   },
