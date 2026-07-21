@@ -159,6 +159,32 @@ npm uninstall --global gsd-omp
 ```
 Modified managed files are preserved and reported. Pass `--force` only when they should be deleted.
 
+## Model routing
+
+OMP and GSD both have model concepts, but they operate at different granularity and the plugin deliberately does not bridge them:
+
+| | OMP | GSD |
+|---|---|---|
+| Switch surface | `/model <id> --provider <p>` | `.planning/config.json` `model_profile` + per-agent `tier` |
+| Granularity | **session-global** | **per-agent** (`gsd-planner` → heavy, `gsd-executor` → standard, …) |
+| When resolved | any time at runtime | install / config time |
+
+The plugin declares `modelMode: 'passive'`, meaning **OMP is the model authority and GSD defers**. This is intentional, not a gap:
+
+- `model-catalog.json` ships `runtimeTierDefaults['omp'] = {}` (empty), so `resolveTierEntry({runtime:'omp',…})` returns `null` and the request-level override path fails open.
+- Projected agent frontmatter does **not** write a `model:` field, letting OMP's native task dispatch use the current session model.
+- `buildBeforeProviderRequestHandler` (request-level model swap) is registered only for the legacy `pi` runtime, not OMP.
+
+### What actually controls the model in OMP
+
+- **To change the model:** use OMP's `/model`. This is the only effective lever — every GSD agent in the session runs on it.
+- **To change the GSD profile:** `/gsd-settings`. This affects GSD's internal agent → tier mapping, but **has no observable effect under OMP** because the omp tier map is empty.
+- `model_profile_overrides.omp` in `.planning/config.json` is a **silent no-op** under OMP. Setting it will not change behavior; do not rely on it.
+
+### Why no deeper bridging
+
+True per-agent routing (planner on a strong model, executor on a fast one) would require OMP's task-dispatch protocol to carry a per-agent `model` field, which is outside this plugin's scope. Filling the omp tier map with fixed IDs would also go stale the moment the user runs `/model`. `passive` is the honest contract.
+
 ## Locale
 
 The host CLI (`gsd-omp install|uninstall|doctor|descriptor`) and EoS bootstrap messages localize through the POSIX environment, resolved in this order:

@@ -161,6 +161,32 @@ npm uninstall --global gsd-omp
 
 被修改的托管文件会被保留并报告。仅当确实要删除它们时，才传入 `--force`。
 
+## 模型路由
+
+OMP 与 GSD 都有模型概念,但二者粒度不同,本插件刻意不做桥接:
+
+| | OMP | GSD |
+|---|---|---|
+| 切换入口 | `/model <id> --provider <p>` | `.planning/config.json` 的 `model_profile` + 每 agent 的 `tier` |
+| 粒度 | **session 全局** | **per-agent**(`gsd-planner` → heavy、`gsd-executor` → standard、…) |
+| 解析时机 | 运行时随时 | install / 配置时 |
+
+插件声明 `modelMode: 'passive'`,即 **OMP 是模型权威,GSD 退让**。这是有意为之,不是缺失:
+
+- `model-catalog.json` 里 `runtimeTierDefaults['omp'] = {}`(空),因此 `resolveTierEntry({runtime:'omp',…})` 返回 `null`,request 级覆盖路径 fail-open。
+- 投影出的 agent frontmatter **不写** `model:` 字段,让 OMP 原生任务派发使用当前 session 模型。
+- `buildBeforeProviderRequestHandler`(request 级模型替换)只对遗留的 `pi` runtime 注册,不对 OMP 注册。
+
+### 在 OMP 下到底什么决定模型
+
+- **换模型:** 用 OMP 的 `/model`。这是唯一真正有效的杠杆 —— session 里所有 GSD agent 都跑在它上面。
+- **换 GSD profile:** `/gsd-settings`。这会影响 GSD 内部的 agent → tier 映射,但**在 OMP 下无可观察效果**,因为 omp tier map 是空的。
+- `.planning/config.json` 里的 `model_profile_overrides.omp` 在 OMP 下是**静默空操作**。设了也不会改变行为,不要依赖它。
+
+### 为什么不做更深的桥接
+
+真正的 per-agent 路由(planner 用强模型、executor 用快模型)需要 OMP 的 task-dispatch 协议携带 per-agent `model` 字段,这超出本插件职责。而用固定 model ID 填充 omp tier map,用户一跑 `/model` 就立刻陈旧。`passive` 是诚实的契约。
+
 ## 语言环境
 
 宿主 CLI（`gsd-omp install|uninstall|doctor|descriptor`）与 EoS 引导阶段的消息遵循 POSIX 环境变量，按以下顺序解析：
