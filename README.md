@@ -41,6 +41,86 @@ Restart OMP after installation, then use:
 
 The plugin also registers the `gsd_invoke` tool for structured access to the public `gsd-tools` CLI.
 
+## Commands
+
+The plugin registers 38 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
+
+### Entry & status
+
+| Command | Description |
+|---|---|
+| `/gsd-next` | Show or prepare the next localized GSD action |
+| `/gsd-progress` | Show GSD progress or advance through its gated next-step workflow |
+| `/gsd-status` | Show a localized GSD project summary |
+| `/gsd <family> <subcommand> [args]` | Invoke the public `gsd-tools` CLI directly |
+
+### Project lifecycle
+
+| Command | Description |
+|---|---|
+| `/gsd-new-project` | Initialize a GSD project with native OMP questions |
+| `/gsd-new-milestone` | Start a GSD milestone with native OMP questions |
+| `/gsd-resume-work` | Restore a GSD project through native OMP controls |
+| `/gsd-pause-work` | Create context handoff when pausing work mid-phase |
+| `/gsd-complete-milestone` | Archive completed milestone and prepare for next version |
+
+### Phase planning
+
+| Command | Description |
+|---|---|
+| `/gsd-spec-phase <n>` | Clarify WHAT a phase delivers; produces SPEC.md |
+| `/gsd-discuss-phase <n>` | Gather phase context through adaptive questioning |
+| `/gsd-plan-phase <n>` | Create PLAN.md with verification loop |
+| `/gsd-mvp-phase <n>` | Plan a phase as a vertical MVP slice |
+| `/gsd-ai-integration-phase <n>` | Generate AI-SPEC.md design contract for AI phases |
+| `/gsd-ui-phase <n>` | Generate UI-SPEC.md design contract for frontend phases |
+
+### Execution & verification
+
+| Command | Description |
+|---|---|
+| `/gsd-execute-phase <n>` | Execute a phase through OMP native task waves |
+| `/gsd-verify-work <n>` | Verify a completed phase through conversational UAT |
+| `/gsd-code-review <n>` | Review a phase through native OMP task dispatch |
+| `/gsd-add-tests <n>` | Generate phase tests through native OMP approvals |
+| `/gsd-validate-phase <n>` | Audit Nyquist validation coverage for a phase |
+| `/gsd-secure-phase <n>` | Verify phase threat mitigations |
+
+### Quality audits
+
+| Command | Description |
+|---|---|
+| `/gsd-ui-review` | Retroactive 6-pillar visual audit of frontend code |
+| `/gsd-eval-review` | Audit an executed AI phase's evaluation coverage |
+| `/gsd-audit-uat` | Cross-phase audit of outstanding UAT and verification items |
+| `/gsd-audit-milestone` | Audit milestone completion against original intent |
+| `/gsd-debug` | Run GSD debugging through native OMP questions and tasks |
+| `/gsd-audit-fix` | Autonomous audit-to-fix pipeline — find, classify, fix, test, commit |
+
+### Ship & git
+
+| Command | Description |
+|---|---|
+| `/gsd-ship <n>` | Ship verified work; create PR and prepare for merge |
+| `/gsd-update` | Update GSD through native preflight and approval gates |
+| `/gsd-undo` | Revert GSD commits through native dependency and approval gates |
+| `/gsd-pr-branch` | Build a filtered PR branch through native preview and approval gates |
+
+### Fast paths & admin
+
+| Command | Description |
+|---|---|
+| `/gsd-quick` | Run a quick task with GSD guarantees (atomic commits, state tracking) |
+| `/gsd-fast` | Run a trivial task inline — no subagents, no planning overhead |
+| `/gsd-import` | Ingest external plans with conflict detection |
+| `/gsd-autonomous` | Run all remaining phases autonomously — discuss→plan→execute |
+| `/gsd-phase` | CRUD for phases in ROADMAP.md — add, insert, remove, edit |
+| `/gsd-settings` | Configure workflow toggles and model profile |
+| `/gsd-workspace` | Manage isolated workspace environments |
+| `/gsd-workstreams` | Manage parallel workstreams |
+
+For the full `gsd-tools` CLI surface behind `/gsd`, run `/gsd <family> help` or call the `gsd_invoke` tool with `subcommand: "help"`.
+
 ## Verify
 
 ```bash

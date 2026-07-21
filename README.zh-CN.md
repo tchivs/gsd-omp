@@ -42,6 +42,86 @@ gsd-omp install
 
 插件还会注册 `gsd_invoke` 工具，用于以结构化方式访问公共 `gsd-tools` CLI。
 
+## 命令
+
+插件注册了 38 个斜杠命令与 `gsd_invoke` 工具。下表按项目生命周期分组,描述取自命令注册元数据。
+
+### 入口与状态
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-next` | 显示或准备下一个本地化的 GSD 动作 |
+| `/gsd-progress` | 显示 GSD 进度,或在门控的下一步工作流中推进 |
+| `/gsd-status` | 显示本地化的 GSD 项目摘要 |
+| `/gsd <family> <subcommand> [args]` | 直接调用公共 `gsd-tools` CLI |
+
+### 项目生命周期
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-new-project` | 通过原生 OMP 提问初始化一个 GSD 项目 |
+| `/gsd-new-milestone` | 通过原生 OMP 提问启动一个 GSD 里程碑 |
+| `/gsd-resume-work` | 通过原生 OMP 控制恢复一个 GSD 项目 |
+| `/gsd-pause-work` | 在阶段中途暂停时生成交接上下文 |
+| `/gsd-complete-milestone` | 归档已完成的里程碑并准备下一个版本 |
+
+### 阶段规划
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-spec-phase <n>` | 厘清阶段交付内容;生成 SPEC.md |
+| `/gsd-discuss-phase <n>` | 通过自适应提问收集阶段上下文 |
+| `/gsd-plan-phase <n>` | 生成 PLAN.md 并带验证回路 |
+| `/gsd-mvp-phase <n>` | 将阶段规划为垂直 MVP 切片 |
+| `/gsd-ai-integration-phase <n>` | 为 AI 阶段生成 AI-SPEC.md 设计契约 |
+| `/gsd-ui-phase <n>` | 为前端阶段生成 UI-SPEC.md 设计契约 |
+
+### 执行与验证
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-execute-phase <n>` | 通过 OMP 原生任务波次执行阶段 |
+| `/gsd-verify-work <n>` | 通过对话式 UAT 验证已完成的阶段 |
+| `/gsd-code-review <n>` | 通过原生 OMP 任务分派审查阶段 |
+| `/gsd-add-tests <n>` | 通过原生 OMP 批准生成阶段测试 |
+| `/gsd-validate-phase <n>` | 审计阶段的 Nyquist 验证覆盖 |
+| `/gsd-secure-phase <n>` | 验证阶段的威胁缓解措施 |
+
+### 质量审计
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-ui-review` | 对前端代码进行回顾性六维视觉审计 |
+| `/gsd-eval-review` | 审计已执行 AI 阶段的评估覆盖 |
+| `/gsd-audit-uat` | 跨阶段审计所有未完成的 UAT 与验证项 |
+| `/gsd-audit-milestone` | 对照原始意图审计里程碑完成度 |
+| `/gsd-debug` | 通过原生 OMP 提问与任务运行 GSD 调试 |
+| `/gsd-audit-fix` | 自主审计到修复流水线 —— 发现、分类、修复、测试、提交 |
+
+### 发布与 Git
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-ship <n>` | 发布已验证的工作;创建 PR 并准备合并 |
+| `/gsd-update` | 通过原生预检与批准门更新 GSD |
+| `/gsd-undo` | 通过原生依赖与批准门回退 GSD 提交 |
+| `/gsd-pr-branch` | 通过原生预览与批准门构建过滤后的 PR 分支 |
+
+### 快捷路径与管理
+
+| 命令 | 说明 |
+|---|---|
+| `/gsd-quick` | 以 GSD 保障运行快捷任务(原子提交、状态追踪) |
+| `/gsd-fast` | 内联执行琐碎任务 —— 无子代理、无规划开销 |
+| `/gsd-import` | 在写入前以冲突检测引入外部计划 |
+| `/gsd-autonomous` | 自主运行所有剩余阶段 —— 讨论→规划→执行 |
+| `/gsd-phase` | 对 ROADMAP.md 中的阶段做增删改查 |
+| `/gsd-settings` | 配置工作流开关与模型档案 |
+| `/gsd-workspace` | 管理隔离的工作区环境 |
+| `/gsd-workstreams` | 管理并行的工作流 |
+
+`/gsd` 背后完整的 `gsd-tools` CLI 接口,可运行 `/gsd <family> help`,或以 `subcommand: "help"` 调用 `gsd_invoke` 工具。
+
 ## 校验
 
 ```bash
