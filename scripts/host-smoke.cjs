@@ -76,6 +76,7 @@ try {
   const model = modelCatalog.models?.find((candidate) => candidate.selector);
   assert.ok(model, 'OMP did not expose a selectable OpenAI model for the host smoke test');
 
+  const stateRequestId = 'gsd-omp-host-smoke-state';
   const rpcOutput = run(
     ompBin,
     [
@@ -84,7 +85,7 @@ try {
       '--model', model.selector,
       '--cwd', repositoryRoot,
     ],
-    { input: '' },
+    { input: `${JSON.stringify({ id: stateRequestId, type: 'get_state' })}\n` },
   );
   const frames = parseRpcFrames(rpcOutput);
   assert.equal(frames.some((frame) => frame.type === 'extension_error'), false, 'OMP reported an extension error');
@@ -101,12 +102,19 @@ try {
     assert.ok(extensionCommands.has(command), `OMP did not load extension command /${command}`);
   }
 
+  const stateResponse = frames.find((frame) => frame.id === stateRequestId);
+  assert.equal(stateResponse?.success, true, 'OMP did not return its RPC session state');
+  const systemPrompt = Array.isArray(stateResponse.data?.systemPrompt)
+    ? stateResponse.data.systemPrompt.join('\n')
+    : String(stateResponse.data?.systemPrompt || '');
+  assert.match(systemPrompt, /xd:\/\/gsd_invoke\b/, 'OMP did not mount the gsd_invoke xdev tool');
+
   const uninstall = parseJson(runPlugin(['uninstall', '--root', runtimeRoot, '--json']), 'gsd-omp uninstall');
   assert.equal(uninstall.removed, install.installed);
   assert.deepEqual(uninstall.skipped, []);
 
   process.stdout.write(
-    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands\n`,
+    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands and xd://gsd_invoke\n`,
   );
 } finally {
   fs.rmSync(runtimeRoot, { recursive: true, force: true });

@@ -3616,7 +3616,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
         return `GSD · ${activity}${detail}`;
       };
       onUpdate?.({ content: [{ type: 'text', text: progressMessage() }] });
-      const timer = onUpdate ? setInterval(() => onUpdate({ content: [{ type: 'text', text: progressMessage() }] }), 250) : null;
+      const timer = onUpdate ? ctx.setInterval(() => onUpdate({ content: [{ type: 'text', text: progressMessage() }] }), 250) : null;
       try {
         const result = await invokeAsync({ ...params, cwd: ctx.cwd, signal });
         return {
@@ -3624,7 +3624,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
           details: result,
         };
       } finally {
-        if (timer) clearInterval(timer);
+        if (timer) ctx.clearTimer(timer);
       }
     }
   });
