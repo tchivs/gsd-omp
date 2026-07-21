@@ -25,7 +25,7 @@
 全局安装已发布的插件，随后将其托管的扩展、agents 与 skills 投影到 OMP：
 
 ```bash
-npm install --global github:tchivs/gsd-omp#v1.0.0
+npm install --global github:tchivs/gsd-omp#v1.0.1
 gsd-omp install
 ```
 
@@ -60,7 +60,7 @@ gsd-omp descriptor
 
 ```bash
 gsd-omp uninstall
-npm install --global github:tchivs/gsd-omp#v1.0.0
+npm install --global github:tchivs/gsd-omp#v1.0.1
 gsd-omp install
 ```
 
