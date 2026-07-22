@@ -490,6 +490,40 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (activeTaskIds?.size === 0) activeGsdTaskIds.delete(projectPath);
     return true;
   }
+  // Detached GSD tasks (OMP's execute/plan dispatch) return at spawn time with
+  // TaskToolDetails.async = { state: 'running', jobId }. The request was tracked
+  // by task `name` (the agent registry id), but job-completion events key on
+  // `jobId` — a separate id space (OMP AsyncJob.jobId != agentId). Without
+  // bridging, every detached task leaks its name entry and /gsd-next is
+  // permanently blocked by a stale count. See open-gsd/gsd-omp task tracking.
+  function reconcileTaskSettlement(event, cwd) {
+    if (event?.toolName !== 'task' || event.isError || typeof event.toolCallId !== 'string') return;
+    const projectPath = path.resolve(cwd);
+    const taskCalls = activeGsdTaskIdsByCall.get(projectPath);
+    const trackedIds = taskCalls?.get(event.toolCallId);
+    if (!trackedIds?.length) return;
+    const taskIds = activeGsdTaskIds.get(projectPath);
+    const asyncInfo = event?.details?.async;
+    if (asyncInfo && asyncInfo.state === 'running' && typeof asyncInfo.jobId === 'string' && asyncInfo.jobId) {
+      // Spawn ack for a detached job: swap name -> jobId so the later job event
+      // (releaseSettledGsdTasks, keyed on jobId) can release it.
+      const jobId = asyncInfo.jobId;
+      for (const id of trackedIds) taskIds?.delete(id);
+      taskIds?.add(jobId);
+      taskCalls.set(event.toolCallId, [jobId]);
+      return;
+    }
+    // Synchronous completion backstop: final results present means the call is
+    // terminal. Gated on results[] so a detached spawn ack lacking async
+    // metadata is not cleared prematurely. (trackGsdTaskProgress already clears
+    // terminal progress entries; this cleans the call map too.)
+    const results = event?.details?.results;
+    if (!Array.isArray(results) || !results.length) return;
+    for (const id of trackedIds) taskIds?.delete(id);
+    taskCalls.delete(event.toolCallId);
+    if (taskCalls.size === 0) activeGsdTaskIdsByCall.delete(projectPath);
+    if (taskIds && taskIds.size === 0) activeGsdTaskIds.delete(projectPath);
+  }
 
   function nativeTaskActivityCount(cwd) {
     return activeGsdTaskIds.get(path.resolve(cwd))?.size || 0;
@@ -1836,17 +1870,21 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
     return launchNativeProgress(ctx, '--next');
   }
 
+  async function emitNativeTasksActive(ctx, count) {
+    const chinese = usesChinese(ctx.cwd);
+    await pi.sendMessage({
+      customType: 'gsd-native-tasks-active',
+      content: chinese
+        ? `OMP 中有 ${count} 个原生 GSD 任务正在运行。请使用任务与 Job 面板跟踪；任务结束后再推进下一步。`
+        : `${count} native GSD task${count === 1 ? ' is' : 's are'} running in OMP. Track it in the task and Job panels; advance after it settles.`,
+      display: true,
+    }, { triggerTurn: false });
+  }
+
   async function chooseNextAction(ctx, state) {
     const activeTaskCount = nativeTaskActivityCount(ctx.cwd);
     if (activeTaskCount > 0) {
-      const chinese = usesChinese(ctx.cwd);
-      await pi.sendMessage({
-        customType: 'gsd-native-tasks-active',
-        content: chinese
-          ? `OMP 中有 ${activeTaskCount} 个原生 GSD 任务正在运行。请使用任务与 Job 面板跟踪；任务结束后再推进下一步。`
-          : `${activeTaskCount} native GSD task${activeTaskCount === 1 ? ' is' : 's are'} running in OMP. Track it in the task and Job panels; advance after it settles.`,
-        display: true,
-      }, { triggerTurn: false });
+      await emitNativeTasksActive(ctx, activeTaskCount);
       return;
     }
     const recovery = nativeTaskRecovery(ctx.cwd);
@@ -3576,6 +3614,8 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
   pi.registerCommand('gsd-next', {
     description: 'Show or prepare the next localized GSD action.',
     handler: async (_input, ctx) => {
+      const activeTaskCount = nativeTaskActivityCount(ctx.cwd);
+      if (activeTaskCount > 0) return emitNativeTasksActive(ctx, activeTaskCount);
       const recovery = nativeTaskRecovery(ctx.cwd);
       const continuation = !recovery && readNextAction(ctx.cwd);
       if (continuation) {
@@ -3687,6 +3727,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     releaseSettledGsdTasks(event, ctx.cwd);
     releaseFailedGsdTaskRequest(event, ctx.cwd);
     trackGsdTaskProgress(event, ctx.cwd);
+    reconcileTaskSettlement(event, ctx.cwd);
     const output = (event.content || [])
       .filter((chunk) => chunk.type === 'text')
       .map((chunk) => chunk.text)
@@ -3720,6 +3761,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     extractNextAction,
     extractCheckpoint,
     extractTaskResults,
+    _nativeTaskActivityCount: nativeTaskActivityCount,
   };
 };
 
