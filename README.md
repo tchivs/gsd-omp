@@ -2,7 +2,7 @@
 [![Release](https://img.shields.io/github/v/release/tchivs/gsd-omp?logo=github&label=release)](https://github.com/tchivs/gsd-omp/releases)
 [![License: MIT](https://img.shields.io/github/license/tchivs/gsd-omp?color=blue)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org)
-[![GSD Core](https://img.shields.io/badge/gsd--core-%E2%89%A51.7.0-0066cc)](https://github.com/open-gsd/gsd-core)
+[![GSD Core](https://img.shields.io/badge/gsd--core-%E2%89%A51.8.0-0066cc)](https://github.com/open-gsd/gsd-core)
 [![OMP EoS](https://img.shields.io/badge/OMP-EoS%20v1-6c31c4)](#eos-contract)
 [![Last Commit](https://img.shields.io/github/last-commit/tchivs/gsd-omp?logo=git&logoColor=white)](https://github.com/tchivs/gsd-omp/commits)
 [![Stars](https://img.shields.io/github/stars/tchivs/gsd-omp?style=social)](https://github.com/tchivs/gsd-omp/stargazers)
@@ -17,7 +17,7 @@ This project is third-party software. It is not endorsed, reviewed, or maintaine
 
 - Node.js 22 or newer
 - Oh My Pi with native ExtensionAPI support
-- GSD Core 1.7.0 or newer; installed automatically as this package's dependency
+- GSD Core 1.8.0 or newer; installed automatically as this package's dependency
 
 ## Install
 

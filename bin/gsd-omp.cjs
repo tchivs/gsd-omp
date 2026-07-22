@@ -74,7 +74,7 @@ function removeEmptyParents(start, stop) {
 function assertSupportedCore(coreRoot) {
   const corePackage = JSON.parse(fs.readFileSync(path.join(coreRoot, 'package.json'), 'utf8'));
   const match = String(corePackage.version || '').match(/^(\d+)\.(\d+)\.(\d+)/);
-  if (!match || Number(match[1]) < 1 || (Number(match[1]) === 1 && Number(match[2]) < 7)) {
+  if (!match || Number(match[1]) < 1 || (Number(match[1]) === 1 && Number(match[2]) < 8)) {
     throw new Error(t('cli.error.unsupportedCore', { version: corePackage.version || 'unknown' }));
   }
   return corePackage.version;

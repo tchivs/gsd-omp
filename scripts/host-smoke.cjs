@@ -7,6 +7,8 @@ const os = require('node:os');
 const path = require('node:path');
 
 const repositoryRoot = path.resolve(__dirname, '..');
+
+const gsdCoreVersion = require('@opengsd/gsd-core/package.json').version;
 const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-host-smoke-'));
 const ompBin = process.env.OMP_BIN || 'omp';
 const gsdOmpBin = process.env.GSD_OMP_BIN;
@@ -57,7 +59,7 @@ function parseRpcFrames(output) {
 try {
   const install = parseJson(runPlugin(['install', '--root', runtimeRoot, '--json']), 'gsd-omp install');
   assert.equal(install.protocolVersion, 1);
-  assert.equal(install.coreVersion, '1.7.0');
+  assert.ok(install.coreVersion === gsdCoreVersion, `coreVersion ${install.coreVersion} !== expected ${gsdCoreVersion}`);
   assert.ok(install.installed > 50, `expected projected artifacts, received ${install.installed}`);
 
   const doctor = parseJson(runPlugin(['doctor', '--root', runtimeRoot, '--json']), 'gsd-omp doctor');
