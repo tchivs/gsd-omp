@@ -93,3 +93,129 @@ test('uses OMP-managed timers for gsd_invoke progress updates', async () => {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+
+function gsdProjectRoot() {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-task-track-'));
+  fs.mkdirSync(path.join(root, '.planning'), { recursive: true });
+  fs.writeFileSync(path.join(root, '.planning', 'STATE.md'), '# State\n');
+  return root;
+}
+
+function taskSpawnCall(toolCallId, names) {
+  return {
+    toolName: 'task',
+    toolCallId,
+    input: {
+      context: 'phase execution',
+      tasks: names.map((name) => ({ name, agent: 'gsd-executor', task: 'do work' })),
+    },
+  };
+}
+
+test('detached GSD task releases its tracked id when the job settles (no stale count)', async () => {
+  // Regression: trackGsdTaskRequest keys on task `name` (agent registry id) but
+  // job-completion events key on `jobId` (AsyncJob.jobId != agentId). Without
+  // bridging at the spawn ack, every detached task leaked a name entry and
+  // /gsd-next was permanently blocked by a stale count.
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const count = () => extension._internals._nativeTaskActivityCount(root);
+    const toolCall = pi.events.get('tool_call');
+    const toolResult = pi.events.get('tool_result');
+    const ctx = { cwd: root };
+
+    await toolCall(taskSpawnCall('call_1', ['Phase1Plan01Executor', 'Phase1Plan02Executor']), ctx);
+    assert.equal(count(), 2, 'two names tracked at spawn');
+
+    await toolResult({
+      toolName: 'task', toolCallId: 'call_1', isError: false, content: [],
+      details: {
+        async: { state: 'running', jobId: 'job_1', type: 'task' },
+        progress: [
+          { id: 'Phase1Plan01Executor', agent: 'gsd-executor', status: 'running' },
+          { id: 'Phase1Plan02Executor', agent: 'gsd-executor', status: 'running' },
+        ],
+      },
+    }, ctx);
+    assert.equal(count(), 1, 'spawn ack swaps two names -> one jobId');
+
+    await toolResult({
+      toolName: 'job', toolCallId: 'call_2', isError: false, content: [],
+      details: { jobs: [{ id: 'job_1', type: 'task', status: 'completed', label: 'p1', durationMs: 1 }] },
+    }, ctx);
+    assert.equal(count(), 0, 'job completion releases the bridged jobId');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('synchronous GSD task releases on terminal tool_result', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const count = () => extension._internals._nativeTaskActivityCount(root);
+    const ctx = { cwd: root };
+
+    await pi.events.get('tool_call')(taskSpawnCall('call_s', ['Phase1Plan03Executor']), ctx);
+    assert.equal(count(), 1, 'name tracked at spawn');
+
+    await pi.events.get('tool_result')({
+      toolName: 'task', toolCallId: 'call_s', isError: false, content: [],
+      details: { results: [{ id: 'Phase1Plan03Executor', agent: 'gsd-executor', exitCode: 0, output: '' }] },
+    }, ctx);
+    assert.equal(count(), 0, 'sync completion clears the tracked name');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('failed GSD task request releases tracked names', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const count = () => extension._internals._nativeTaskActivityCount(root);
+    const ctx = { cwd: root };
+
+    await pi.events.get('tool_call')(taskSpawnCall('call_f', ['Phase1Plan04Executor']), ctx);
+    assert.equal(count(), 1);
+
+    await pi.events.get('tool_result')({
+      toolName: 'task', toolCallId: 'call_f', isError: true, content: [],
+    }, ctx);
+    assert.equal(count(), 0, 'errored spawn releases the tracked name');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gsd-next does not advance while a native GSD task is still running', async () => {
+  // /gsd-next must check native task activity BEFORE dispatching a saved
+  // continuation, mirroring chooseNextAction. Otherwise it spawns the next
+  // phase on top of in-flight executor tasks.
+  const root = gsdProjectRoot();
+  fs.writeFileSync(
+    path.join(root, '.planning', '.omp-next-action.json'),
+    JSON.stringify({ command: 'gsd-plan-phase 2', label: 'Plan Phase 2' }),
+  );
+  try {
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root, hasUI: true, ui: {} };
+
+    await pi.events.get('tool_call')(taskSpawnCall('call_run', ['Phase1Plan05Executor']), ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 1, 'task tracked');
+
+    await pi.commands.get('gsd-next').handler({}, ctx);
+    assert.equal(sent.length, 1, 'gsd-next emitted exactly one message');
+    assert.equal(sent[0].customType, 'gsd-native-tasks-active',
+      'gsd-next reports active tasks instead of dispatching the saved continuation');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
