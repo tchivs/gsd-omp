@@ -10,7 +10,7 @@ module.exports = {
   'cli.error.unknownArgument': 'Unknown argument: {arg}',
   'cli.error.rootRequiresPath': '--root requires a path',
   'cli.error.cannotReadManifest': 'Cannot read {path}: {message}',
-  'cli.error.unsupportedCore': 'gsd-omp requires @opengsd/gsd-core >=1.7.0; found {version}',
+  'cli.error.unsupportedCore': 'gsd-omp requires @opengsd/gsd-core >=1.8.0; found {version}',
   'cli.error.refusingOverwrite': 'Refusing to overwrite unmanaged or modified file: {path} (rerun with --force to replace GSD-owned projections)',
 
   'eos.error.unexpectedProfile': 'gsd-omp: EoS negotiation produced {profile}, expected programmatic-cli',

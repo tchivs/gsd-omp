@@ -29,7 +29,7 @@ function resolveEngineRoot(startDir) {
       if (parent === dir) break;
       dir = parent;
     }
-    throw new Error('gsd-omp: @opengsd/gsd-core >=1.7.0 is required');
+    throw new Error('gsd-omp: @opengsd/gsd-core >=1.8.0 is required');
   }
 }
 
@@ -554,7 +554,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         if (parent === dir) break;
         dir = parent;
       }
-      throw new Error('gsd-omp: @opengsd/gsd-core >=1.7.0 is required');
+      throw new Error('gsd-omp: @opengsd/gsd-core >=1.8.0 is required');
     }
   }
 
