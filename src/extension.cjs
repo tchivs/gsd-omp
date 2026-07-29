@@ -2418,20 +2418,39 @@ OMP milestone-audit contract:
     await pi.sendMessage({ customType: 'gsd-native-audit-milestone', content: prompt, display: true }, { triggerTurn: true });
   }
 
-  function nativeCompleteMilestonePrompt(input) {
+function nativeCompleteMilestonePrompt(input) {
     const tokens = parseCommandLine(input);
     if (tokens.length !== 1 || !isMilestoneVersion(tokens[0])) return null;
     const version = tokens[0];
-    return `# OMP native GSD milestone completion
-
-Execute the gsd-complete-milestone workflow end-to-end for version ${JSON.stringify(version)}.
-
-OMP milestone-completion contract:
-- Read \`skill://gsd-complete-milestone\` and its complete workflow before acting. Run the open-artifact audit and canonical readiness check first. If artifacts, verification, requirements, or milestone-audit gaps remain, use native \`ask\` for the workflow's resolve/acknowledge/cancel or proceed/verify/abort decisions; never silently override a closeout gate.
-- Before changing any source planning artifact, present the milestone scope, verification state, requirement coverage, statistics, and accomplishments at every required confirmation gate. Record any accepted overrides and deferred items through the workflow's sanitized documented path.
-- Archive before deletion: create the milestone roadmap and requirements archives, preserve UI artifacts, create the safety archive commit, then update ROADMAP.md/PROJECT.md and remove the active REQUIREMENTS.md only in the workflow's required order. Do not lose Backlog content or binary screenshot-cleanup safety.
-- Create the canonical closeout commit and tag only after all prior gates pass. Use native \`ask\` for the optional tag-push decision; do not push or claim release completion without that explicit decision. Present the actual next-milestone route.
-`;
+    return [
+      '# OMP native GSD milestone completion',
+      '',
+      'Execute the gsd-complete-milestone workflow end-to-end for version ' + JSON.stringify(version) + '.',
+      '',
+      'OMP milestone-completion contract:',
+      '- Read \`skill://gsd-complete-milestone\` and its complete workflow before acting. Run the open-artifact audit and canonical readiness check first. If artifacts, verification, requirements, or milestone-audit gaps remain, use native \`ask\` for the workflow\'s resolve/acknowledge/cancel or proceed/verify/abort decisions; never silently override a closeout gate.',
+      '- Before changing any source planning artifact, present the milestone scope, verification state, requirement coverage, statistics, and accomplishments at every required confirmation gate. Record any accepted overrides and deferred items through the workflow\'s sanitized documented path.',
+      '- Archive before deletion: create the milestone roadmap and requirements archives, preserve UI artifacts, create the safety archive commit, then update ROADMAP.md/PROJECT.md and remove the active REQUIREMENTS.md only in the workflow\'s required order. Do not lose Backlog content or binary screenshot-cleanup safety.',
+      '- Create the canonical closeout commit and tag only after all prior gates pass. Use native \`ask\` for the optional tag-push decision; do not push or claim release completion without that explicit decision. Present the actual next-milestone route.',
+      '- **Clean up stale task results**: After archiving (step 4, before the final commit), remove stale entries from the OMP task-results file. Run the following command to delete all task results whose phase belongs to this completed milestone (extracted from the freshly archived roadmap):',
+      '',
+      '  ```bash',
+      '  node -e "',
+      '    const fs=require(\\"fs\\");',
+      '    const f=\\".planning/.omp-task-results.json\\";',
+      '    if(!fs.existsSync(f)) process.exit(0);',
+      '    const version=\\"' + version + '\\";',
+      '    const road=\\".planning/milestones/v\\"+version+\\"-ROADMAP.md\\";',
+      '    if(!fs.existsSync(road)) process.exit(0);',
+      '    const txt=fs.readFileSync(road,\\"utf8\\");',
+      '    const phases=[...txt.matchAll(/\\*\\*Phase (\\d+):/g)].map(m=>m[1].padStart(2,\\"0\\"));',
+      '    if(!phases.length) process.exit(0);',
+      '    const data=JSON.parse(fs.readFileSync(f,\\"utf8\\"));',
+      '    const kept=data.filter(function(e){return!phases.includes(e.phase);});',
+      '    if(kept.length<data.length){fs.writeFileSync(f,JSON.stringify(kept,null,2));console.log(\\"Cleaned \\"+(data.length-kept.length)+\\" stale entries\\");}',
+      '  "',
+      '  ```',
+    ].join('\n');
   }
 
   async function launchNativeCompleteMilestone(ctx, input) {
@@ -3029,7 +3048,7 @@ OMP interaction contract:
     const tokens = parseCommandLine(input);
     if (tokens.length > 1 || (tokens.length && tokens[0] !== '--next')) return null;
     const mode = tokens[0] === '--next' ? ' --next' : '';
-    const runtimeTools = path.join(path.resolve(__dirname, '..'), 'gsd-core', 'bin', 'gsd-tools.cjs');
+    const runtimeTools = CLI_PATH;
     return `# OMP native GSD progress
 
 Execute the gsd-progress workflow${mode} end-to-end.
