@@ -13,12 +13,14 @@ const OMP_AXES = Object.freeze({
     background: true,
     subagentToolkit: 'full',
     backgroundDispatch: true,
+    isolation: 'none',
   }),
   modelMode: 'passive',
   hookBus: 'host',
   stateIO: 'filesystem',
   transport: 'native-extension',
   runtime: 'bun',
+  effortSurface: 'none',
 });
 
 let cached;

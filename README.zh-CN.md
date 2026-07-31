@@ -216,7 +216,8 @@ GSD_OMP_LOCALE=zh_CN.UTF-8 gsd-omp doctor
 | Interface points | `command`, `dispatch`, `model`, `hooks`, `state`, `artifact` |
 | `embeddingMode` | `imperative` |
 | `commandSurface` | `slash-programmatic` |
-| `dispatch` | 命名分发、嵌套至深度 2、后台、完整子代理工具集 |
+| `dispatch` | 命名分发、嵌套至深度 2、后台、完整子代理工具集；`isolation: none` —— GSD 的 worktree 调度器不是 OMP 的隔离原语（原生 `task` 的 `isolated: true` 才是） |
+| `effortSurface` | `none` —— 由 OMP 拥有模型/effort 路由，GSD 不把推理 effort 推入 OMP 派发 |
 | `modelMode` | `passive` —— 由 OMP 拥有模型路由 |
 | `hookBus` | `host` —— 由 OMP 拥有生命周期事件 |
 | `stateIO` | `filesystem` |
