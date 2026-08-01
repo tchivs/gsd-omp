@@ -214,7 +214,8 @@ Supported locales: `en` (default), `zh-CN`.
 | Interface points | `command`, `dispatch`, `model`, `hooks`, `state`, `artifact` |
 | `embeddingMode` | `imperative` |
 | `commandSurface` | `slash-programmatic` |
-| `dispatch` | named, nested to depth 2, background, full subagent toolkit |
+| `dispatch` | named, nested to depth 2, background, full subagent toolkit; `isolation: none` — GSD's worktree scheduler is not OMP's isolation primitive (native `task` `isolated: true` is) |
+| `effortSurface` | `none` — OMP owns model/effort routing; GSD never pushes reasoning effort into OMP dispatch |
 | `modelMode` | `passive` — OMP owns model routing |
 | `hookBus` | `host` — OMP owns lifecycle events |
 | `stateIO` | `filesystem` |

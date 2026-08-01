@@ -17,12 +17,14 @@ const Eos = require('../src/eos.cjs');
   assert.deepEqual(binding.negotiation.warnings, []);
 });
 
- test('declares all eight EoS axes from the OMP host contract', () => {
+ test('declares all ten EoS axes from the OMP host contract', () => {
   assert.deepEqual(Object.keys(Eos.OMP_AXES).sort(), [
-    'commandSurface', 'dispatch', 'embeddingMode', 'hookBus', 'modelMode',
-    'runtime', 'stateIO', 'transport',
+    'commandSurface', 'dispatch', 'effortSurface', 'embeddingMode', 'hookBus',
+    'modelMode', 'runtime', 'stateIO', 'transport',
   ]);
   assert.equal(Eos.OMP_AXES.commandSurface, 'slash-programmatic');
   assert.equal(Eos.OMP_AXES.transport, 'native-extension');
   assert.equal(Eos.OMP_AXES.runtime, 'bun');
+  assert.equal(Eos.OMP_AXES.effortSurface, 'none');
+  assert.equal(Eos.OMP_AXES.dispatch.isolation, 'none');
 });
