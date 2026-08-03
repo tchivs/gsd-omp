@@ -24,7 +24,7 @@ This project is third-party software. It is not endorsed, reviewed, or maintaine
 Install the released plugin globally, then project its managed extension, agents, and skills into OMP:
 
 ```bash
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.2.tar.gz
 gsd-omp install
 ```
 
@@ -139,7 +139,7 @@ gsd-omp descriptor
 
 ```bash
 gsd-omp uninstall
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.2.tar.gz
 gsd-omp install
 ```
 
