@@ -57,14 +57,12 @@ function temporaryRoot(name) {
 
  test('update reports up-to-date when the local version matches the latest GitHub release', () => {
   const packageJson = require('../package.json');
-  const bin = require('../bin/gsd-omp.cjs');
-  const original = bin.githubLatestRelease;
-  bin.githubLatestRelease = () => ({ tag_name: `v${packageJson.version}`, tarball_url: 'https://api.github.com/repos/tchivs/gsd-omp/tarball/x' });
-  try {
-    const result = update({ root: temporaryRoot('gsd-omp-update') });
-    assert.equal(result.upToDate, true);
-    assert.equal(result.current, packageJson.version);
-  } finally {
-    bin.githubLatestRelease = original;
-  }
+  const { update } = require('../bin/gsd-omp.cjs');
+  // Inject a stub instead of hitting the live GitHub API.
+  const result = update({
+    root: temporaryRoot('gsd-omp-update'),
+    latestRelease: () => ({ tag_name: `v${packageJson.version}`, tarball_url: 'https://api.github.com/repos/tchivs/gsd-omp/tarball/x' }),
+  });
+  assert.equal(result.upToDate, true);
+  assert.equal(result.current, packageJson.version);
 });
