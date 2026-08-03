@@ -56,6 +56,30 @@ function mockPi() {
   }
 });
 
+ test('points GSD_AGENTS_DIR at the OMP agents projection so the gsd-core agent check is not a false negative', () => {
+  // gsd-core's checkAgentsInstalled('omp') resolves the agents dir from the
+  // runtime home; 'omp' is not a registered runtime, so it falls back to
+  // ~/.claude/agents and reports every GSD agent missing. The extension must
+  // export GSD_AGENTS_DIR = <runtimeRoot>/agents so init.progress /
+  // init.new-project see the projected agents (research/roadmap etc.).
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-agents-'));
+  const prior = process.env.GSD_AGENTS_DIR;
+  try {
+    delete process.env.GSD_AGENTS_DIR;
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    assert.equal(
+      process.env.GSD_AGENTS_DIR,
+      path.join(root, 'agents'),
+      'extension must export GSD_AGENTS_DIR pointing at its projected agents dir',
+    );
+  } finally {
+    if (prior === undefined) delete process.env.GSD_AGENTS_DIR;
+    else process.env.GSD_AGENTS_DIR = prior;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('uses OMP-managed timers for gsd_invoke progress updates', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-managed-timer-'));
   try {
