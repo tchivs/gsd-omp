@@ -302,6 +302,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   const fs = require('node:fs');
   const path = require('node:path');
+  const os = require('node:os');
   const advisedFiles = new Set();
   const activeGsdTaskIds = new Map();
   const activeGsdTaskIdsByCall = new Map();
@@ -598,6 +599,15 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     path.join(ENGINE_ROOT, 'bin', 'gsd-tools.cjs'),
   ].find(fs.existsSync);
 
+  // OMP's global config dir (~/.omp/agent) is not a registered gsd-core runtime
+  // (registry has `pi`, not `omp`), so gsd-core's agent-install check resolves
+  // the agents dir to the Claude fallback (~/.claude/agents) and reports every
+  // GSD agent missing. Point the check at the plugin's real projection
+  // (~/.omp/agent/agents) so init.progress / init.new-project stop warning
+  // about unavailable research/roadmap agents.
+  const agentsDir = process.env.GSD_AGENTS_DIR || path.join(options.runtimeRoot || path.join(os.homedir(), '.omp', 'agent'), 'agents');
+  if (!process.env.GSD_AGENTS_DIR) process.env.GSD_AGENTS_DIR = agentsDir;
+
   function parseCommandLine(input) {
     const tokens = String(input || '').match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
     return tokens.map((token) => {
@@ -613,7 +623,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const cliArgs = [CLI_PATH, family, subcommand, ...args];
     if (raw) cliArgs.push('--raw');
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, cliArgs, { cwd, env: { ...process.env, GSD_RUNTIME: 'omp' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, cliArgs, { cwd, env: { ...process.env, GSD_RUNTIME: 'omp', GSD_AGENTS_DIR: agentsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       let cancelled = false;
@@ -3056,7 +3066,7 @@ Execute the gsd-progress workflow${mode} end-to-end.
 OMP progress contract:
 - For \`--next\`, delegate all routing to the canonical progress workflow. Do not re-derive phase routing in this adapter or bypass its Gates 1–3 and Route 0 incomplete-phase invariant.
 - Preserve the workflow's state inspection, safety gates, routing, and user-interaction rules. The native command is an entry point, not a replacement workflow.
-- Bind the workflow's \`gsd_run\` helper directly to \`${runtimeTools}\`, set \`GSD_RUNTIME=omp\` on every invocation, and use it for every GSD query. Never invoke bare \`gsd-tools\` or \`gsd-tools.cjs\` through \`PATH\`; another runtime installation may own that executable.
+- Bind the workflow's \`gsd_run\` helper directly to \`${runtimeTools}\`, set \`GSD_RUNTIME=omp\` and \`GSD_AGENTS_DIR=${agentsDir}\` on every invocation, and use it for every GSD query. Never invoke bare \`gsd-tools\` or \`gsd-tools.cjs\` through \`PATH\`; another runtime installation may own that executable.
 - Treat \`.planning/.continue-here.md\` as optional: probe its existence before any Read. A missing file passes Gate 1 and must not emit a tool error.
 - This message activates the \`gsd-progress\` skill workflow, not a \`gsd-tools\` CLI subcommand. Read \`skill://gsd-progress\`, then execute its selected workflow in this turn.
 - Do not call \`gsd_invoke\` to run this workflow. In particular, \`family: "gsd"\` is invalid; \`/gsd-progress\` is a native workflow entry point, not a \`gsd-tools\` family.
