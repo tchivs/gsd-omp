@@ -51,8 +51,8 @@ function githubLatestRelease() {
   }
 }
 
-function update({ root: rootOverride, force = false } = {}) {
-  const release = githubLatestRelease();
+function update({ root: rootOverride, force = false, latestRelease } = {}) {
+  const release = (latestRelease || githubLatestRelease)();
   const latest = String(release.tag_name || '').replace(/^v/, '');
   if (latest && latest === packageJson.version) {
     return { upToDate: true, current: packageJson.version, root: runtimeRoot(rootOverride) };
