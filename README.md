@@ -138,6 +138,16 @@ gsd-omp descriptor
 ## Upgrade
 
 ```bash
+gsd-omp update
+```
+
+Checks GitHub for the latest release, installs it (npm global tarball install), and re-projects the managed extension, agents, and skills in one step. Restart OMP afterwards.
+
+> **GSD core version**: `gsd-omp update` upgrades the bundled gsd-core (it is this package's dependency). OMP's own `~/.omp/agent/gsd-core/` engine tree (currently 1.7.0-rc.6) is outside this plugin's management — the plugin resolves gsd-core from its own `node_modules`. To align the OMP-side engine with the plugin, use OMP's own update path (e.g. `omp update`).
+
+If the update check fails (offline, GitHub unreachable), fall back to the manual steps:
+
+```bash
 gsd-omp uninstall
 npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.3.tar.gz
 gsd-omp install

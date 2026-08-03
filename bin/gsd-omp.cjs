@@ -5,12 +5,15 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const Eos = require('../src/eos.cjs');
 const { buildProjectedArtifacts } = require('../src/projection.cjs');
 const packageJson = require('../package.json');
 const { t } = require('../src/locale.cjs');
 
 const MANIFEST_NAME = '.gsd-omp-manifest.json';
+const GITHUB_REPO = 'tchivs/gsd-omp';
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 function sha256(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -32,6 +35,47 @@ function parseArgs(argv) {
     } else throw new Error(t('cli.error.unknownArgument', { arg }));
   }
   return { command, root, force, json };
+}
+
+function githubLatestRelease() {
+  const res = spawnSync(
+    process.execPath,
+    ['-e', `fetch('${RELEASE_API}', { headers: { 'User-Agent': 'gsd-omp' } }).then(r => r.json()).then(j => process.stdout.write(JSON.stringify({ tag_name: j.tag_name, tarball_url: j.tarball_url }))).catch(() => process.exit(1))`],
+    { encoding: 'utf8', timeout: 15000 },
+  );
+  if (res.status !== 0) throw new Error(t('cli.error.updateCheckFailed'));
+  try {
+    return JSON.parse(res.stdout);
+  } catch {
+    throw new Error(t('cli.error.updateCheckFailed'));
+  }
+}
+
+function update({ root: rootOverride, force = false } = {}) {
+  const release = githubLatestRelease();
+  const latest = String(release.tag_name || '').replace(/^v/, '');
+  if (latest && latest === packageJson.version) {
+    return { upToDate: true, current: packageJson.version, root: runtimeRoot(rootOverride) };
+  }
+  const tarball = release.tarball_url || `https://github.com/${GITHUB_REPO}/archive/refs/tags/${release.tag_name || 'main'}.tar.gz`;
+  const npmArgs = ['install', '--global', '--prefix', globalPrefix(), tarball];
+  if (!process.env.GSD_OMP_UPDATE_SKIP_BIN) npmArgs.push('--no-save');
+  const res = spawnSync('npm', npmArgs, { encoding: 'utf8', stdio: 'inherit', timeout: 300000 });
+  if (res.status !== 0) throw new Error(t('cli.error.updateFailed'));
+  const installed = install({ root: rootOverride, force });
+  return {
+    updated: true,
+    from: packageJson.version,
+    to: latest || 'latest',
+    root: installed.root,
+    manifestPath: installed.manifestPath,
+    installed: installed.installed,
+  };
+}
+
+function globalPrefix() {
+  const res = spawnSync('npm', ['prefix', '--global'], { encoding: 'utf8' });
+  return (res.stdout || '').trim() || undefined;
 }
 
 function runtimeRoot(override) {
@@ -205,6 +249,7 @@ function main(argv = process.argv.slice(2)) {
   else if (options.command === 'uninstall') result = uninstall(options);
   else if (options.command === 'doctor') result = doctor(options);
   else if (options.command === 'descriptor') result = descriptor();
+  else if (options.command === 'update') result = update(options);
   else if (options.command === 'help' || options.command === '--help') {
     print(t('cli.usage'), false);
     return 0;
@@ -222,4 +267,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall };
+module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall, update, githubLatestRelease, globalPrefix };

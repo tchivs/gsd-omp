@@ -139,6 +139,16 @@ gsd-omp descriptor
 ## 升级
 
 ```bash
+gsd-omp update
+```
+
+检查 GitHub 上的最新 release，通过 npm 全局 tarball 安装新版本，并重新投影受管的 extension / agents / skills，一步完成。之后重启 OMP。
+
+> **GSD 核心版本**：`gsd-omp update` 会一起升级捆绑的 gsd-core（它是本包的依赖）。但 OMP 的 `~/.omp/agent/gsd-core/` 是 OMP 自带的引擎树（当前 1.7.0-rc.6），不在本插件管理范围内——插件从自身 `node_modules` 解析 gsd-core。若需要 OMP 侧引擎与插件一致，需用 OMP 自己的更新路径（如 `omp update`）。
+
+如果更新检查失败（离线、GitHub 不可达），回退到手动步骤：
+
+```bash
 gsd-omp uninstall
 npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.3.tar.gz
 gsd-omp install

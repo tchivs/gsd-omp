@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { doctor, install, uninstall } = require('../bin/gsd-omp.cjs');
+const { doctor, install, uninstall, update } = require('../bin/gsd-omp.cjs');
 // Pin locale to English so the ownership-error regex stays deterministic
 // regardless of the dev shell's LANG.
 require('../src/locale.cjs').setLocale('en');
@@ -52,5 +52,19 @@ function temporaryRoot(name) {
     assert.equal(fs.existsSync(path.join(root, '.gsd-omp-manifest.json')), true);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+ test('update reports up-to-date when the local version matches the latest GitHub release', () => {
+  const packageJson = require('../package.json');
+  const bin = require('../bin/gsd-omp.cjs');
+  const original = bin.githubLatestRelease;
+  bin.githubLatestRelease = () => ({ tag_name: `v${packageJson.version}`, tarball_url: 'https://api.github.com/repos/tchivs/gsd-omp/tarball/x' });
+  try {
+    const result = update({ root: temporaryRoot('gsd-omp-update') });
+    assert.equal(result.upToDate, true);
+    assert.equal(result.current, packageJson.version);
+  } finally {
+    bin.githubLatestRelease = original;
   }
 });

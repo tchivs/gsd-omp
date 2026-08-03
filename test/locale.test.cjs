@@ -54,7 +54,7 @@ test('setLocale switches the active dictionary', () => {
     locale.t('cli.error.unknownArgument', { arg: '--banana' }),
     '未知参数：--banana',
   );
-  assert.equal(locale.t('cli.usage'), '用法：gsd-omp [install|uninstall|doctor|descriptor] [--root <路径>] [--force] [--json]');
+  assert.equal(locale.t('cli.usage'), '用法：gsd-omp [install|update|uninstall|doctor|descriptor] [--root <路径>] [--force] [--json]');
   locale.setLocale('en');
   assert.equal(locale.getLocale(), 'en');
 });
