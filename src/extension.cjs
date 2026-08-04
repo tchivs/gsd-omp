@@ -1387,9 +1387,6 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const checkpoint = !activeTaskCount && !recovery && !action ? resumableCheckpoint(cwd, state) : null;
     if (!state && !activeTaskCount && !action && !recovery && !checkpoint) return [];
     const recoveryCount = recovery?.failures.length || 0;
-    const activeRow = activeTaskCount
-      ? widgetColor(36, chinese ? `● ${activeTaskCount} 个原生任务运行中` : `● ${activeTaskCount} native task${activeTaskCount === 1 ? '' : 's'} running`)
-      : null;
     const recoveryRow = recoveryCount
       ? widgetColor(31, chinese ? `⛔ ${recoveryCount} 个原生任务待恢复` : `⛔ Native task recovery: ${recoveryCount} failed`)
       : null;
@@ -1397,25 +1394,22 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       ? widgetColor(33, chinese ? `↻ 恢复阶段 ${checkpoint.phase}：${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划已完成` : `↻ Resume Phase ${checkpoint.phase}: ${checkpoint.plansDone}/${checkpoint.plansTotal} plans complete`)
       : null;
     if (state?.unreadable) {
-      const rows = [activeRow, recoveryRow].filter(Boolean);
+      const rows = [recoveryRow].filter(Boolean);
       const lines = [widgetColor(31, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
       if (recoveryRow) lines.push(`   ${widgetColor(2, recovery.command)}`);
       return lines;
     }
     const hasRisks = Boolean(state?.blockers || state?.concerns);
-    if (!hasRisks && !activeRow && !action && !recovery && !checkpoint) return [];
-    const heading = activeRow
-      ? widgetColor(36, chinese ? 'GSD · 任务运行中' : 'GSD · Tasks running')
-      : recovery
-        ? widgetColor(31, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
-        : action
-          ? widgetColor(36, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
-          : checkpoint
-            ? widgetColor(33, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
-            : widgetColor(33, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
+    if (!hasRisks && !action && !recovery && !checkpoint) return [];
+    const heading = recovery
+      ? widgetColor(31, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
+      : action
+        ? widgetColor(36, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
+        : checkpoint
+          ? widgetColor(33, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
+          : widgetColor(33, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
     const rows = [];
     if (hasRisks) rows.push(widgetRiskLine(state, chinese));
-    if (activeRow) rows.push(activeRow);
     if (recoveryRow) rows.push(recoveryRow);
     if (checkpointRow) rows.push(checkpointRow);
     if (action) rows.push(action.label.slice(0, 92));
@@ -3790,6 +3784,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     extractNextAction,
     extractCheckpoint,
     extractTaskResults,
+    widgetLines,
     _nativeTaskActivityCount: nativeTaskActivityCount,
   };
 };

@@ -216,6 +216,20 @@ test('failed GSD task request releases tracked names', async () => {
   }
 });
 
+
+test('does not render the low-signal active-task banner in the ordinary widget', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    await pi.events.get('tool_call')(taskSpawnCall('call_widget', ['Phase1Plan06Executor']), ctx);
+    const lines = extension._internals.widgetLines(root);
+    assert.equal(lines.some((line) => line.includes('个原生任务运行中') || line.includes('native task')), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 test('gsd-next does not advance while a native GSD task is still running', async () => {
   // /gsd-next must check native task activity BEFORE dispatching a saved
   // continuation, mirroring chooseNextAction. Otherwise it spawns the next
