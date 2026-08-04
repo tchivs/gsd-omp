@@ -54,23 +54,36 @@ function githubLatestRelease() {
 function update({ root: rootOverride, force = false, latestRelease } = {}) {
   const release = (latestRelease || githubLatestRelease)();
   const latest = String(release.tag_name || '').replace(/^v/, '');
-  if (latest && latest === packageJson.version) {
-    return { upToDate: true, current: packageJson.version, root: runtimeRoot(rootOverride) };
+  const comparison = compareVersions(latest, packageJson.version);
+  if (!latest || comparison <= 0) {
+    return { upToDate: comparison === 0, current: packageJson.version, latest: latest || null, root: runtimeRoot(rootOverride) };
   }
-  const tarball = release.tarball_url || `https://github.com/${GITHUB_REPO}/archive/refs/tags/${release.tag_name || 'main'}.tar.gz`;
-  const npmArgs = ['install', '--global', '--prefix', globalPrefix(), tarball];
-  if (!process.env.GSD_OMP_UPDATE_SKIP_BIN) npmArgs.push('--no-save');
+  const tarball = release.tarball_url || `https://github.com/${GITHUB_REPO}/archive/refs/tags/v${latest}.tar.gz`;
+  const npmArgs = ['install', '--global', tarball];
   const res = spawnSync('npm', npmArgs, { encoding: 'utf8', stdio: 'inherit', timeout: 300000 });
   if (res.status !== 0) throw new Error(t('cli.error.updateFailed'));
-  const installed = install({ root: rootOverride, force });
-  return {
-    updated: true,
-    from: packageJson.version,
-    to: latest || 'latest',
-    root: installed.root,
-    manifestPath: installed.manifestPath,
-    installed: installed.installed,
-  };
+
+  // The current process still contains the old package. Invoke the freshly
+  // installed CLI so projection uses the new extension, agents, skills, and
+  // bundled gsd-core rather than the old process's module graph.
+  const prefix = globalPrefix();
+  const cli = process.platform === 'win32'
+    ? path.join(prefix, 'gsd-omp.cmd')
+    : path.join(prefix, 'bin', 'gsd-omp');
+  const installArgs = ['install'];
+  if (rootOverride) installArgs.push('--root', rootOverride);
+  if (force) installArgs.push('--force');
+  const projection = spawnSync(cli, installArgs, { encoding: 'utf8', stdio: 'inherit', timeout: 120000 });
+  if (projection.status !== 0) throw new Error(t('cli.error.updateProjectionFailed'));
+  return { updated: true, from: packageJson.version, to: latest, root: runtimeRoot(rootOverride) };
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => String(value || '').match(/^(\\d+)\\.(\\d+)\\.(\\d+)/)?.slice(1).map(Number) || null;
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return 0;
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 }
 
 function globalPrefix() {
