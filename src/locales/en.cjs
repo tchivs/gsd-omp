@@ -14,6 +14,7 @@ module.exports = {
   'cli.error.refusingOverwrite': 'Refusing to overwrite unmanaged or modified file: {path} (rerun with --force to replace GSD-owned projections)',
   'cli.error.updateCheckFailed': 'gsd-omp: could not check for updates (GitHub API unreachable or returned no release)',
   'cli.error.updateFailed': 'gsd-omp: update failed — npm install did not exit cleanly; run the tarball URL manually and then `gsd-omp install`',
+  'cli.error.updateProjectionFailed': 'gsd-omp: update installed the new package but could not re-project OMP files; run `gsd-omp install` manually',
 
   'eos.error.unexpectedProfile': 'gsd-omp: EoS negotiation produced {profile}, expected programmatic-cli',
   'eos.error.unsupportedProtocol': 'gsd-omp: unsupported EoS protocol {version}',
