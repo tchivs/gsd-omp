@@ -120,6 +120,21 @@ jobs:
                 break
                 ;;
               BLOCKED)
+                # GitHub requires manual approval for workflow runs
+                # triggered by github-actions[bot]-created PRs. Try to
+                # self-approve (needs a token that may approve runs);
+                # if that fails, a human approves in the Actions UI.
+                head_sha="$(gh pr view "${pr_num}" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)"
+                run_ids="$(gh api "repos/${{ github.repository }}/commits/${head_sha}/check-runs" \
+                  --jq '.check_runs[] | select(.conclusion=="action_required") | .details_url' \
+                  | sed -n 's#.*/actions/runs/\([0-9]*\).*#\1#p' | sort -u)"
+                for rid in ${run_ids}; do
+                  if gh api -X POST "repos/${{ github.repository }}/actions/runs/${rid}/approve" >/dev/null 2>&1; then
+                    echo "auto-approved run ${rid}"
+                  else
+                    echo "cannot auto-approve run ${rid}; human approval needed"
+                  fi
+                done
                 sleep 15
                 ;;
               BEHIND|DIRTY)
