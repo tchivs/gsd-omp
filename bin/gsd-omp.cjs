@@ -5,12 +5,15 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const Eos = require('../src/eos.cjs');
 const { buildProjectedArtifacts } = require('../src/projection.cjs');
 const packageJson = require('../package.json');
 const { t } = require('../src/locale.cjs');
 
 const MANIFEST_NAME = '.gsd-omp-manifest.json';
+const GITHUB_REPO = 'tchivs/gsd-omp';
+const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 function sha256(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -32,6 +35,60 @@ function parseArgs(argv) {
     } else throw new Error(t('cli.error.unknownArgument', { arg }));
   }
   return { command, root, force, json };
+}
+
+function githubLatestRelease() {
+  const res = spawnSync(
+    process.execPath,
+    ['-e', `fetch('${RELEASE_API}', { headers: { 'User-Agent': 'gsd-omp' } }).then(r => r.json()).then(j => process.stdout.write(JSON.stringify({ tag_name: j.tag_name, tarball_url: j.tarball_url }))).catch(() => process.exit(1))`],
+    { encoding: 'utf8', timeout: 15000 },
+  );
+  if (res.status !== 0) throw new Error(t('cli.error.updateCheckFailed'));
+  try {
+    return JSON.parse(res.stdout);
+  } catch {
+    throw new Error(t('cli.error.updateCheckFailed'));
+  }
+}
+
+function update({ root: rootOverride, force = false, latestRelease } = {}) {
+  const release = (latestRelease || githubLatestRelease)();
+  const latest = String(release.tag_name || '').replace(/^v/, '');
+  const comparison = compareVersions(latest, packageJson.version);
+  if (!latest || comparison <= 0) {
+    return { upToDate: comparison === 0, current: packageJson.version, latest: latest || null, root: runtimeRoot(rootOverride) };
+  }
+  const tarball = release.tarball_url || `https://github.com/${GITHUB_REPO}/archive/refs/tags/v${latest}.tar.gz`;
+  const npmArgs = ['install', '--global', tarball];
+  const res = spawnSync('npm', npmArgs, { encoding: 'utf8', stdio: 'inherit', timeout: 300000 });
+  if (res.status !== 0) throw new Error(t('cli.error.updateFailed'));
+
+  // The current process still contains the old package. Invoke the freshly
+  // installed CLI so projection uses the new extension, agents, skills, and
+  // bundled gsd-core rather than the old process's module graph.
+  const prefix = globalPrefix();
+  const cli = process.platform === 'win32'
+    ? path.join(prefix, 'gsd-omp.cmd')
+    : path.join(prefix, 'bin', 'gsd-omp');
+  const installArgs = ['install'];
+  if (rootOverride) installArgs.push('--root', rootOverride);
+  if (force) installArgs.push('--force');
+  const projection = spawnSync(cli, installArgs, { encoding: 'utf8', stdio: 'inherit', timeout: 120000 });
+  if (projection.status !== 0) throw new Error(t('cli.error.updateProjectionFailed'));
+  return { updated: true, from: packageJson.version, to: latest, root: runtimeRoot(rootOverride) };
+}
+
+function compareVersions(left, right) {
+  const parse = (value) => String(value || '').match(/^(\\d+)\\.(\\d+)\\.(\\d+)/)?.slice(1).map(Number) || null;
+  const a = parse(left);
+  const b = parse(right);
+  if (!a || !b) return 0;
+  return a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+}
+
+function globalPrefix() {
+  const res = spawnSync('npm', ['prefix', '--global'], { encoding: 'utf8' });
+  return (res.stdout || '').trim() || undefined;
 }
 
 function runtimeRoot(override) {
@@ -205,6 +262,7 @@ function main(argv = process.argv.slice(2)) {
   else if (options.command === 'uninstall') result = uninstall(options);
   else if (options.command === 'doctor') result = doctor(options);
   else if (options.command === 'descriptor') result = descriptor();
+  else if (options.command === 'update') result = update(options);
   else if (options.command === 'help' || options.command === '--help') {
     print(t('cli.usage'), false);
     return 0;
@@ -222,4 +280,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall };
+module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall, update, githubLatestRelease, globalPrefix };

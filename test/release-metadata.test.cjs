@@ -14,7 +14,7 @@ function readJson(file) {
 test('release metadata and README install commands use the package version', () => {
   const packageJson = readJson('package.json');
   const packageLock = readJson('package-lock.json');
-  const expectedInstall = `npm install --global github:tchivs/gsd-omp#v${packageJson.version}`;
+  const expectedInstall = `npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v${packageJson.version}.tar.gz`;
 
   assert.equal(packageLock.version, packageJson.version, 'package-lock.json version must match package.json');
   assert.equal(packageLock.packages[''].version, packageJson.version, 'lockfile root package version must match package.json');
@@ -22,7 +22,7 @@ test('release metadata and README install commands use the package version', () 
   for (const readme of ['README.md', 'README.zh-CN.md']) {
     const installCommands = fs.readFileSync(path.join(root, readme), 'utf8')
       .split(/\r?\n/)
-      .filter((line) => line.startsWith('npm install --global github:tchivs/gsd-omp#'));
+      .filter((line) => line.startsWith('npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v'));
 
     assert.deepEqual(
       installCommands,

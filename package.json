@@ -1,6 +1,6 @@
 {
   "name": "gsd-omp",
-  "version": "1.0.1",
+  "version": "1.0.5",
   "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System — extension bindings, slash-command surface, and Host-Integration SDK adapter for AI coding agents",
   "license": "MIT",
   "author": "tchivs",
@@ -21,7 +21,7 @@
     "prepack": "npm run lint && npm test"
   },
   "dependencies": {
-    "@opengsd/gsd-core": "^1.8.0"
+    "@opengsd/gsd-core": "^1.9.1"
   },
   "engines": {
     "node": ">=22.0.0",

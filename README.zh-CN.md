@@ -25,7 +25,7 @@
 全局安装已发布的插件，随后将其托管的扩展、agents 与 skills 投影到 OMP：
 
 ```bash
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.5.tar.gz
 gsd-omp install
 ```
 
@@ -139,8 +139,18 @@ gsd-omp descriptor
 ## 升级
 
 ```bash
+gsd-omp update
+```
+
+检查 GitHub 上的最新 release，通过 npm 全局 tarball 安装新版本，并重新投影受管的 extension / agents / skills，一步完成。之后重启 OMP。
+
+> **GSD 核心版本**：`gsd-omp update` 会一起升级捆绑的 gsd-core（它是本包的依赖）。但 OMP 的 `~/.omp/agent/gsd-core/` 是 OMP 自带的引擎树（当前 1.7.0-rc.6），不在本插件管理范围内——插件从自身 `node_modules` 解析 gsd-core。若需要 OMP 侧引擎与插件一致，需用 OMP 自己的更新路径（如 `omp update`）。
+
+如果更新检查失败（离线、GitHub 不可达），回退到手动步骤：
+
+```bash
 gsd-omp uninstall
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.5.tar.gz
 gsd-omp install
 ```
 
@@ -216,7 +226,8 @@ GSD_OMP_LOCALE=zh_CN.UTF-8 gsd-omp doctor
 | Interface points | `command`, `dispatch`, `model`, `hooks`, `state`, `artifact` |
 | `embeddingMode` | `imperative` |
 | `commandSurface` | `slash-programmatic` |
-| `dispatch` | 命名分发、嵌套至深度 2、后台、完整子代理工具集 |
+| `dispatch` | 命名分发、嵌套至深度 2、后台、完整子代理工具集；`isolation: none` —— GSD 的 worktree 调度器不是 OMP 的隔离原语（原生 `task` 的 `isolated: true` 才是） |
+| `effortSurface` | `none` —— 由 OMP 拥有模型/effort 路由，GSD 不把推理 effort 推入 OMP 派发 |
 | `modelMode` | `passive` —— 由 OMP 拥有模型路由 |
 | `hookBus` | `host` —— 由 OMP 拥有生命周期事件 |
 | `stateIO` | `filesystem` |

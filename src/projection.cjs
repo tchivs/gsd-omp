@@ -86,7 +86,8 @@ function projectAgent(content, sourcePath, context) {
 
 function runtimeCliBlock(coreRoot) {
   const cliPath = toPosix(path.join(coreRoot, 'gsd-core', 'bin', 'gsd-tools.cjs'));
-  return `<omp_runtime_cli>\n**OMP runtime CLI:** \`${cliPath}\` is the authoritative GSD CLI for this plugin. Run it with \`GSD_RUNTIME=omp\`; do not dispatch a different runtime's bare \`gsd-tools\` executable. OMP owns model routing, approvals, native tasks, and isolation.\n</omp_runtime_cli>`;
+  return `<omp_runtime_cli>\n**OMP runtime CLI:** \`${cliPath}\` is the authoritative GSD CLI for this plugin. Run it with \`GSD_RUNTIME=omp\`. OMP owns model routing, approvals, native tasks, and isolation.\n\n**Agents on OMP:** GSD's \`init.progress\`/\`init.new-project\` agent check (\`.planning/agents_installed\`) resolves the agents directory from the runtime home. OMP's global config dir is not a registered gsd-core runtime, so the check falls back to \`~/.claude/agents\` and reports all GSD agents missing even though the plugin projects them under \`~/.omp/agent/agents\`. Point the check at the real install by exporting \`GSD_AGENTS_DIR\` (e.g. \`~/.omp/agent/agents\`) or by creating a symlink \`~/.claude/agents -> ~/.omp/agent/agents\`; the workflow must be launched fresh after either change. Do not reinstall the plugin.
+</omp_runtime_cli>`;
 }
 
 function projectSkill(name, content, context) {

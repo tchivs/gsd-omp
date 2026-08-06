@@ -302,6 +302,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   const fs = require('node:fs');
   const path = require('node:path');
+  const os = require('node:os');
   const advisedFiles = new Set();
   const activeGsdTaskIds = new Map();
   const activeGsdTaskIdsByCall = new Map();
@@ -598,6 +599,15 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     path.join(ENGINE_ROOT, 'bin', 'gsd-tools.cjs'),
   ].find(fs.existsSync);
 
+  // OMP's global config dir (~/.omp/agent) is not a registered gsd-core runtime
+  // (registry has `pi`, not `omp`), so gsd-core's agent-install check resolves
+  // the agents dir to the Claude fallback (~/.claude/agents) and reports every
+  // GSD agent missing. Point the check at the plugin's real projection
+  // (~/.omp/agent/agents) so init.progress / init.new-project stop warning
+  // about unavailable research/roadmap agents.
+  const agentsDir = process.env.GSD_AGENTS_DIR || path.join(options.runtimeRoot || path.join(os.homedir(), '.omp', 'agent'), 'agents');
+  if (!process.env.GSD_AGENTS_DIR) process.env.GSD_AGENTS_DIR = agentsDir;
+
   function parseCommandLine(input) {
     const tokens = String(input || '').match(/(?:[^\s"']+|"[^"]*"|'[^']*')+/g) || [];
     return tokens.map((token) => {
@@ -613,7 +623,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const cliArgs = [CLI_PATH, family, subcommand, ...args];
     if (raw) cliArgs.push('--raw');
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, cliArgs, { cwd, env: { ...process.env, GSD_RUNTIME: 'omp' }, stdio: ['ignore', 'pipe', 'pipe'] });
+      const child = spawn(process.execPath, cliArgs, { cwd, env: { ...process.env, GSD_RUNTIME: 'omp', GSD_AGENTS_DIR: agentsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       let cancelled = false;
@@ -1377,9 +1387,6 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const checkpoint = !activeTaskCount && !recovery && !action ? resumableCheckpoint(cwd, state) : null;
     if (!state && !activeTaskCount && !action && !recovery && !checkpoint) return [];
     const recoveryCount = recovery?.failures.length || 0;
-    const activeRow = activeTaskCount
-      ? widgetColor(36, chinese ? `● ${activeTaskCount} 个原生任务运行中` : `● ${activeTaskCount} native task${activeTaskCount === 1 ? '' : 's'} running`)
-      : null;
     const recoveryRow = recoveryCount
       ? widgetColor(31, chinese ? `⛔ ${recoveryCount} 个原生任务待恢复` : `⛔ Native task recovery: ${recoveryCount} failed`)
       : null;
@@ -1387,25 +1394,22 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       ? widgetColor(33, chinese ? `↻ 恢复阶段 ${checkpoint.phase}：${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划已完成` : `↻ Resume Phase ${checkpoint.phase}: ${checkpoint.plansDone}/${checkpoint.plansTotal} plans complete`)
       : null;
     if (state?.unreadable) {
-      const rows = [activeRow, recoveryRow].filter(Boolean);
+      const rows = [recoveryRow].filter(Boolean);
       const lines = [widgetColor(31, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
       if (recoveryRow) lines.push(`   ${widgetColor(2, recovery.command)}`);
       return lines;
     }
     const hasRisks = Boolean(state?.blockers || state?.concerns);
-    if (!hasRisks && !activeRow && !action && !recovery && !checkpoint) return [];
-    const heading = activeRow
-      ? widgetColor(36, chinese ? 'GSD · 任务运行中' : 'GSD · Tasks running')
-      : recovery
-        ? widgetColor(31, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
-        : action
-          ? widgetColor(36, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
-          : checkpoint
-            ? widgetColor(33, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
-            : widgetColor(33, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
+    if (!hasRisks && !action && !recovery && !checkpoint) return [];
+    const heading = recovery
+      ? widgetColor(31, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
+      : action
+        ? widgetColor(36, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
+        : checkpoint
+          ? widgetColor(33, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
+          : widgetColor(33, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
     const rows = [];
     if (hasRisks) rows.push(widgetRiskLine(state, chinese));
-    if (activeRow) rows.push(activeRow);
     if (recoveryRow) rows.push(recoveryRow);
     if (checkpointRow) rows.push(checkpointRow);
     if (action) rows.push(action.label.slice(0, 92));
@@ -1946,7 +1950,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
 Execute GSD phase \`${phaseCommand}\` end-to-end using the execute-phase workflow and its existing safety gates.
 
 OMP dispatch contract:
-- This OMP contract takes precedence over runtime-specific \`Agent(...)\` or \`isolation="worktree"\` directions in execute-phase: on OMP, native \`task\` with \`isolated: true\` is the only valid isolated executor dispatch.
+- This OMP contract takes precedence over runtime-specific \`Agent(...)\` or \`isolation="worktree"\` directions in execute-phase: on OMP, native \`task\` with \`isolated: true\` is the only valid isolated executor dispatch. OMP declares \`dispatch.isolation: "none"\` in its EoS handshake — GSD's isolation vocabulary is harness-created (Claude) or GSD-created (Codex) worktrees, neither of which applies; OMP's isolation is its native task \`isolated: true\` primitive, so always resolve the executor-isolation step to the native-task path below, never to \`harness-worktree\`/\`orchestrator-worktree\` dispatch, and never to inline main-checkout writes.
 - Use native \`task\` for every non-interactive executor dispatch. One plan is one task; independent plans in a wave are one task batch. Never use \`irc wait\` for task completion: IRC is coordination-only. Use \`job poll\` for the spawned native runtime IDs and consume every native task result before dispatching the next wave.
 - For a wave, call native \`task\` with its batch shape: a shared top-level \`context\` and \`tasks[]\`. Each executor item has \`name: "Phase${phase}Plan{PLAN_COMPACT}Executor"\` (remove plan punctuation), \`agent: "gsd-executor"\`, the complete self-contained plan assignment in \`task\`, and \`isolated: true\`. Do not put \`agent\` at the top level and do not invent \`id\`, \`role\`, \`description\`, or \`assignment\` fields.
 - Every executor that writes repository files MUST request \`isolated: true\`. If isolated execution is unavailable, stop and report the blocked plan; never fall back to main-checkout writes or manual \`git worktree\` commands.
@@ -2418,20 +2422,39 @@ OMP milestone-audit contract:
     await pi.sendMessage({ customType: 'gsd-native-audit-milestone', content: prompt, display: true }, { triggerTurn: true });
   }
 
-  function nativeCompleteMilestonePrompt(input) {
+function nativeCompleteMilestonePrompt(input) {
     const tokens = parseCommandLine(input);
     if (tokens.length !== 1 || !isMilestoneVersion(tokens[0])) return null;
     const version = tokens[0];
-    return `# OMP native GSD milestone completion
-
-Execute the gsd-complete-milestone workflow end-to-end for version ${JSON.stringify(version)}.
-
-OMP milestone-completion contract:
-- Read \`skill://gsd-complete-milestone\` and its complete workflow before acting. Run the open-artifact audit and canonical readiness check first. If artifacts, verification, requirements, or milestone-audit gaps remain, use native \`ask\` for the workflow's resolve/acknowledge/cancel or proceed/verify/abort decisions; never silently override a closeout gate.
-- Before changing any source planning artifact, present the milestone scope, verification state, requirement coverage, statistics, and accomplishments at every required confirmation gate. Record any accepted overrides and deferred items through the workflow's sanitized documented path.
-- Archive before deletion: create the milestone roadmap and requirements archives, preserve UI artifacts, create the safety archive commit, then update ROADMAP.md/PROJECT.md and remove the active REQUIREMENTS.md only in the workflow's required order. Do not lose Backlog content or binary screenshot-cleanup safety.
-- Create the canonical closeout commit and tag only after all prior gates pass. Use native \`ask\` for the optional tag-push decision; do not push or claim release completion without that explicit decision. Present the actual next-milestone route.
-`;
+    return [
+      '# OMP native GSD milestone completion',
+      '',
+      'Execute the gsd-complete-milestone workflow end-to-end for version ' + JSON.stringify(version) + '.',
+      '',
+      'OMP milestone-completion contract:',
+      '- Read \`skill://gsd-complete-milestone\` and its complete workflow before acting. Run the open-artifact audit and canonical readiness check first. If artifacts, verification, requirements, or milestone-audit gaps remain, use native \`ask\` for the workflow\'s resolve/acknowledge/cancel or proceed/verify/abort decisions; never silently override a closeout gate.',
+      '- Before changing any source planning artifact, present the milestone scope, verification state, requirement coverage, statistics, and accomplishments at every required confirmation gate. Record any accepted overrides and deferred items through the workflow\'s sanitized documented path.',
+      '- Archive before deletion: create the milestone roadmap and requirements archives, preserve UI artifacts, create the safety archive commit, then update ROADMAP.md/PROJECT.md and remove the active REQUIREMENTS.md only in the workflow\'s required order. Do not lose Backlog content or binary screenshot-cleanup safety.',
+      '- Create the canonical closeout commit and tag only after all prior gates pass. Use native \`ask\` for the optional tag-push decision; do not push or claim release completion without that explicit decision. Present the actual next-milestone route.',
+      '- **Clean up stale task results**: After archiving (step 4, before the final commit), remove stale entries from the OMP task-results file. Run the following command to delete all task results whose phase belongs to this completed milestone (extracted from the freshly archived roadmap):',
+      '',
+      '  ```bash',
+      '  node -e "',
+      '    const fs=require(\\"fs\\");',
+      '    const f=\\".planning/.omp-task-results.json\\";',
+      '    if(!fs.existsSync(f)) process.exit(0);',
+      '    const version=\\"' + version + '\\";',
+      '    const road=\\".planning/milestones/v\\"+version+\\"-ROADMAP.md\\";',
+      '    if(!fs.existsSync(road)) process.exit(0);',
+      '    const txt=fs.readFileSync(road,\\"utf8\\");',
+      '    const phases=[...txt.matchAll(/\\*\\*Phase (\\d+):/g)].map(m=>m[1].padStart(2,\\"0\\"));',
+      '    if(!phases.length) process.exit(0);',
+      '    const data=JSON.parse(fs.readFileSync(f,\\"utf8\\"));',
+      '    const kept=data.filter(function(e){return!phases.includes(e.phase);});',
+      '    if(kept.length<data.length){fs.writeFileSync(f,JSON.stringify(kept,null,2));console.log(\\"Cleaned \\"+(data.length-kept.length)+\\" stale entries\\");}',
+      '  "',
+      '  ```',
+    ].join('\n');
   }
 
   async function launchNativeCompleteMilestone(ctx, input) {
@@ -3029,7 +3052,7 @@ OMP interaction contract:
     const tokens = parseCommandLine(input);
     if (tokens.length > 1 || (tokens.length && tokens[0] !== '--next')) return null;
     const mode = tokens[0] === '--next' ? ' --next' : '';
-    const runtimeTools = path.join(path.resolve(__dirname, '..'), 'gsd-core', 'bin', 'gsd-tools.cjs');
+    const runtimeTools = CLI_PATH;
     return `# OMP native GSD progress
 
 Execute the gsd-progress workflow${mode} end-to-end.
@@ -3037,7 +3060,7 @@ Execute the gsd-progress workflow${mode} end-to-end.
 OMP progress contract:
 - For \`--next\`, delegate all routing to the canonical progress workflow. Do not re-derive phase routing in this adapter or bypass its Gates 1–3 and Route 0 incomplete-phase invariant.
 - Preserve the workflow's state inspection, safety gates, routing, and user-interaction rules. The native command is an entry point, not a replacement workflow.
-- Bind the workflow's \`gsd_run\` helper directly to \`${runtimeTools}\`, set \`GSD_RUNTIME=omp\` on every invocation, and use it for every GSD query. Never invoke bare \`gsd-tools\` or \`gsd-tools.cjs\` through \`PATH\`; another runtime installation may own that executable.
+- Bind the workflow's \`gsd_run\` helper directly to \`${runtimeTools}\`, set \`GSD_RUNTIME=omp\` and \`GSD_AGENTS_DIR=${agentsDir}\` on every invocation, and use it for every GSD query. Never invoke bare \`gsd-tools\` or \`gsd-tools.cjs\` through \`PATH\`; another runtime installation may own that executable.
 - Treat \`.planning/.continue-here.md\` as optional: probe its existence before any Read. A missing file passes Gate 1 and must not emit a tool error.
 - This message activates the \`gsd-progress\` skill workflow, not a \`gsd-tools\` CLI subcommand. Read \`skill://gsd-progress\`, then execute its selected workflow in this turn.
 - Do not call \`gsd_invoke\` to run this workflow. In particular, \`family: "gsd"\` is invalid; \`/gsd-progress\` is a native workflow entry point, not a \`gsd-tools\` family.
@@ -3761,6 +3784,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     extractNextAction,
     extractCheckpoint,
     extractTaskResults,
+    widgetLines,
     _nativeTaskActivityCount: nativeTaskActivityCount,
   };
 };

@@ -24,7 +24,7 @@ This project is third-party software. It is not endorsed, reviewed, or maintaine
 Install the released plugin globally, then project its managed extension, agents, and skills into OMP:
 
 ```bash
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.5.tar.gz
 gsd-omp install
 ```
 
@@ -138,8 +138,18 @@ gsd-omp descriptor
 ## Upgrade
 
 ```bash
+gsd-omp update
+```
+
+Checks GitHub for the latest release, installs it (npm global tarball install), and re-projects the managed extension, agents, and skills in one step. Restart OMP afterwards.
+
+> **GSD core version**: `gsd-omp update` upgrades the bundled gsd-core (it is this package's dependency). OMP's own `~/.omp/agent/gsd-core/` engine tree (currently 1.7.0-rc.6) is outside this plugin's management — the plugin resolves gsd-core from its own `node_modules`. To align the OMP-side engine with the plugin, use OMP's own update path (e.g. `omp update`).
+
+If the update check fails (offline, GitHub unreachable), fall back to the manual steps:
+
+```bash
 gsd-omp uninstall
-npm install --global github:tchivs/gsd-omp#v1.0.1
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.5.tar.gz
 gsd-omp install
 ```
 
@@ -214,7 +224,8 @@ Supported locales: `en` (default), `zh-CN`.
 | Interface points | `command`, `dispatch`, `model`, `hooks`, `state`, `artifact` |
 | `embeddingMode` | `imperative` |
 | `commandSurface` | `slash-programmatic` |
-| `dispatch` | named, nested to depth 2, background, full subagent toolkit |
+| `dispatch` | named, nested to depth 2, background, full subagent toolkit; `isolation: none` — GSD's worktree scheduler is not OMP's isolation primitive (native `task` `isolated: true` is) |
+| `effortSurface` | `none` — OMP owns model/effort routing; GSD never pushes reasoning effort into OMP dispatch |
 | `modelMode` | `passive` — OMP owns model routing |
 | `hookBus` | `host` — OMP owns lifecycle events |
 | `stateIO` | `filesystem` |
