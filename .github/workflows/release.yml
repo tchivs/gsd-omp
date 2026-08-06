@@ -125,9 +125,10 @@ jobs:
                 # self-approve (needs a token that may approve runs);
                 # if that fails, a human approves in the Actions UI.
                 head_sha="$(gh pr view "${pr_num}" --repo "${{ github.repository }}" --json headRefOid --jq .headRefOid)"
-                run_ids="$(gh api "repos/${{ github.repository }}/commits/${head_sha}/check-runs" \
-                  --jq '.check_runs[] | select(.conclusion=="action_required") | .details_url' \
-                  | sed -n 's#.*/actions/runs/\([0-9]*\).*#\1#p' | sort -u)"
+                # Approval-pending runs do NOT appear in commit check-runs,
+                # so list workflow runs for the head SHA directly.
+                run_ids="$(gh api "repos/${{ github.repository }}/actions/runs?head_sha=${head_sha}" \
+                  --jq '.workflow_runs[] | select(.conclusion=="action_required") | .id')"
                 for rid in ${run_ids}; do
                   if gh api -X POST "repos/${{ github.repository }}/actions/runs/${rid}/approve" >/dev/null 2>&1; then
                     echo "auto-approved run ${rid}"
