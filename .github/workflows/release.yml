@@ -1,0 +1,176 @@
+name: Auto-release
+
+# Publishes a new version whenever main moves ahead of the latest release:
+# bumps the patch version, opens/updates a release PR, waits for CI, merges,
+# tags, and creates the GitHub release (the source for `gsd-omp update`).
+#
+# main is protected by the "Protect main" ruleset (pull_request +
+# required_status_checks), so the bump itself goes through a PR.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: '22.x'
+
+      - name: Resolve release state
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          version="$(node -p "require('./package.json').version")"
+          latest_tag="$(gh api "repos/${{ github.repository }}/releases/latest" --jq .tag_name 2>/dev/null || echo '')"
+          head_tag="$(git describe --exact-match --tags HEAD 2>/dev/null || echo '')"
+          echo "version=${version} latest_tag=${latest_tag} head_tag=${head_tag}"
+          if [ -n "${head_tag}" ] && [ "${head_tag}" = "v${version}" ]; then
+            # HEAD is exactly the published version: nothing to do.
+            echo "action=none" >> "$GITHUB_OUTPUT"
+          elif [ -n "${latest_tag}" ] && [ "${latest_tag}" != "v${version}" ]; then
+            # Version already bumped past the latest tag (e.g. a release PR
+            # was just merged but tagging failed). Tag the current HEAD.
+            echo "action=tag" >> "$GITHUB_OUTPUT"
+            echo "new_version=${version}" >> "$GITHUB_OUTPUT"
+          else
+            new_version="$(node -e "const s='${version}'.split('.'); console.log(s[0]+'.'+s[1]+'.'+(+s[2]+1))")"
+            echo "action=bump" >> "$GITHUB_OUTPUT"
+            echo "new_version=${new_version}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open or update release PR
+        id: pr
+        if: steps.state.outputs.action == 'bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          new_version="${{ steps.state.outputs.new_version }}"
+          branch="chore/release-v${new_version}"
+          git config user.name "gsd-omp release bot"
+          git config user.email "actions@users.noreply.github.com"
+          existing="$(gh pr list --repo "${{ github.repository }}" --search 'chore: release gsd-omp' --state open --json number,headRefName --jq '.[0] // empty')"
+          if [ -n "${existing}" ]; then
+            pr_num="$(printf '%s' "${existing}" | jq -r .number)"
+            head_ref="$(printf '%s' "${existing}" | jq -r .headRefName)"
+            git fetch origin "${head_ref}"
+            git checkout -B "${head_ref}" FETCH_HEAD
+            git rebase origin/main
+            node scripts/bump-version.cjs "${new_version}"
+            git add -A
+            git -c user.name="gsd-omp release bot" -c user.email="actions@users.noreply.github.com" commit -m "chore: release gsd-omp v${new_version}" || echo "no new changes"
+            git push --force origin "${head_ref}"
+            echo "number=${pr_num}" >> "$GITHUB_OUTPUT"
+          else
+            git checkout -b "${branch}"
+            node scripts/bump-version.cjs "${new_version}"
+            git add -A
+            git -c user.name="gsd-omp release bot" -c user.email="actions@users.noreply.github.com" commit -m "chore: release gsd-omp v${new_version}"
+            git push -u origin "${branch}"
+            pr_num="$(gh pr create --repo "${{ github.repository }}" --base main --head "${branch}" \
+              --title "chore: release gsd-omp v${new_version}" \
+              --body "Automated release PR created by the Auto-release workflow (bumps package version and README install URLs)." \
+              --json number --jq .number)"
+            echo "number=${pr_num}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Wait for CI and merge release PR
+        if: steps.state.outputs.action == 'bump'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          pr_num="${{ steps.pr.outputs.number }}"
+          new_version="${{ steps.state.outputs.new_version }}"
+          for _ in $(seq 1 80); do
+            state="$(gh pr view "${pr_num}" --repo "${{ github.repository }}" --json state,mergeStateStatus --jq '"\(.state)|\(.mergeStateStatus)"')"
+            pr_state="${state%%|*}"
+            mss="${state##*|}"
+            if [ "${pr_state}" = "MERGED" ]; then
+              echo "merged"
+              break
+            fi
+            if [ "${pr_state}" != "OPEN" ]; then
+              echo "PR ${pr_num} is ${pr_state}; manual intervention needed"
+              exit 0
+            fi
+            case "${mss}" in
+              CLEAN|UNSTABLE)
+                gh pr merge "${pr_num}" --repo "${{ github.repository }}" --squash
+                break
+                ;;
+              BLOCKED)
+                sleep 15
+                ;;
+              BEHIND|DIRTY)
+                head_ref="$(gh pr view "${pr_num}" --repo "${{ github.repository }}" --json headRefName --jq .headRefName)"
+                git fetch origin main "${head_ref}"
+                git checkout -B "${head_ref}" FETCH_HEAD
+                git rebase origin/main
+                node scripts/bump-version.cjs "${new_version}"
+                git add -A
+                git -c user.name="gsd-omp release bot" -c user.email="actions@users.noreply.github.com" commit -m "chore: release gsd-omp v${new_version}" || echo "no new changes"
+                git push --force origin "${head_ref}"
+                sleep 15
+                ;;
+              *)
+                echo "unexpected merge state ${mss}; sleeping"
+                sleep 15
+                ;;
+            esac
+          done
+
+      - name: Tag and publish release
+        if: steps.state.outputs.action != 'none'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          new_version="${{ steps.state.outputs.new_version }}"
+          if [ "${{ steps.state.outputs.action }}" = "bump" ]; then
+            pr_state="$(gh pr view "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" --json state --jq .state)"
+            if [ "${pr_state}" != "MERGED" ]; then
+              echo "release PR not merged yet (${pr_state}); skipping tag, next push will continue"
+              exit 0
+            fi
+            sha="$(gh pr view "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" --json mergeCommit --jq .mergeCommit.oid)"
+            # Merge commits can lag behind the API briefly; retry.
+            for _ in $(seq 1 10); do
+              [ -n "${sha}" ] && [ "${sha}" != "null" ] && break
+              sleep 3
+              sha="$(gh pr view "${{ steps.pr.outputs.number }}" --repo "${{ github.repository }}" --json mergeCommit --jq .mergeCommit.oid)"
+            done
+          else
+            sha="$(git rev-parse HEAD)"
+          fi
+          tag="v${new_version}"
+          if ! gh api "repos/${{ github.repository }}/git/ref/tags/${tag}" >/dev/null 2>&1; then
+            gh api --method POST "repos/${{ github.repository }}/git/refs" \
+              -f "ref=refs/tags/${tag}" -f "sha=${sha}"
+          fi
+          if ! gh release view "${tag}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            prev="$(gh release list --repo "${{ github.repository }}" --limit 2 --json tagName --jq 'if length > 1 then .[1].tagName else .[0].tagName end')"
+            notes="$(gh api "repos/${{ github.repository }}/compare/${prev}...${sha}" --jq '.commits[].commit.message | split("\n")[0]' | sed 's/^/- /')"
+            gh release create "${tag}" --repo "${{ github.repository }}" --title "gsd-omp v${new_version}" --notes "${notes}"
+          fi
+          echo "published ${tag} at ${sha}"

@@ -1,0 +1,20 @@
+version: 2
+updates:
+  # Runtime dependency on the upstream GSD core. A bump PR triggers the full
+  # CI (unit + host smoke on pinned and latest OMP), which is the adaptation
+  # gate for gsd-core changes.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
