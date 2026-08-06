@@ -31,6 +31,14 @@ gsd-omp install
 
 支持 `PI_CODING_AGENT_DIR` 环境变量。未设置时，文件安装到 `~/.omp/agent`。
 
+### agents 目录
+
+会话内扩展会导出 `GSD_AGENTS_DIR`（默认指向 `<runtimeRoot>/agents`，即 `~/.omp/agent/agents`），并在每次调用 `gsd-tools` 时连同 `GSD_RUNTIME=omp` 一起传入。
+
+这是受支持的正规机制，不是 workaround：`GSD_AGENTS_DIR` 是 gsd-core `getAgentsDir` 契约中优先级最高的覆盖项——在任何运行时查找之前被优先检查，适用于所有运行时。OMP 的配置根目录不是 gsd-core 已注册的运行时（注册表中只有 `pi`，没有 `omp`），因此没有该变量时，`init.progress` / `init.new-project` 的 agents 检查会回退到 `~/.claude/agents`，并把所有 GSD agents 报告为缺失。
+
+仅当环境中尚未定义该变量时插件才会写入它。如果你自行管理 agents 投影，可在启动 OMP 前设置 `GSD_AGENTS_DIR`，插件会原样使用你的路径。（`PI_CODING_AGENT_DIR` 控制安装器把文件写到哪里；`GSD_AGENTS_DIR` 控制 gsd-core 到哪里查找 agents。）
+
 安装完成后重启 OMP，即可使用：
 
 ```text
