@@ -30,6 +30,14 @@ gsd-omp install
 
 `PI_CODING_AGENT_DIR` is honored. Without it, files are installed under `~/.omp/agent`.
 
+### Agents directory
+
+The in-session extension exports `GSD_AGENTS_DIR` (defaulting to `<runtimeRoot>/agents`, i.e. `~/.omp/agent/agents`) and passes it to every `gsd-tools` invocation together with `GSD_RUNTIME=omp`.
+
+This is the sanctioned mechanism, not a shim: `GSD_AGENTS_DIR` is the highest-priority override in gsd-core's `getAgentsDir` contract — it is consulted before any runtime lookup, for any runtime. OMP's config root is not a registered gsd-core runtime (the registry ships `pi`, not `omp`), so without this variable the `init.progress` / `init.new-project` agent check would fall back to `~/.claude/agents` and report every GSD agent as missing.
+
+The variable is only set when the environment does not already define it. If you manage the agents projection yourself, set `GSD_AGENTS_DIR` before starting OMP and the plugin uses your location as-is. (`PI_CODING_AGENT_DIR` controls where the installer writes files; `GSD_AGENTS_DIR` controls where gsd-core looks for them.)
+
 Restart OMP after installation, then use:
 
 ```text
