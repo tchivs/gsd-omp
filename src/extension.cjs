@@ -3667,7 +3667,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     parameters: z.object({
       family: z.string().default('query'),
       subcommand: z.string().default('help'),
-      args: z.array(z.string()).default([]),
+      args: z.array(z.string()).default(() => []),
       raw: z.boolean().optional(),
     }),
     async execute(_toolCallId, params, signal, onUpdate, ctx) {
