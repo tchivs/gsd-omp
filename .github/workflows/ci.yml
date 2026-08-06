@@ -5,7 +5,7 @@ on:
     branches: [main]
   pull_request:
   schedule:
-    - cron: '17 5 * * 1'
+    - cron: '17 5 * * *'
   workflow_dispatch:
 
 permissions:
@@ -65,3 +65,39 @@ jobs:
           GSD_OMP_BIN: gsd-omp
           OMP_VERSION: ${{ matrix.omp-version }}
         run: node scripts/host-smoke.cjs
+
+  upstream-report:
+    name: Report upstream drift
+    needs: [unit, host-smoke]
+    if: github.event_name == 'schedule' && failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: Open or update drift issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          omp_latest="$(npm view @oh-my-pi/pi-coding-agent version 2>/dev/null || echo unknown)"
+          gsd_core_latest="$(npm view @opengsd/gsd-core version 2>/dev/null || echo unknown)"
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          title="Upstream drift: scheduled CI failed (OMP ${omp_latest}, gsd-core ${gsd_core_latest})"
+          existing="$(gh issue list --repo "${{ github.repository }}" --search 'in:title "Upstream drift"' --state open --json number --jq '.[0].number // empty')"
+          if [ -n "${existing}" ]; then
+            gh issue comment "${existing}" --repo "${{ github.repository }}" \
+              --body "Re-failed on $(date -u +%Y-%m-%dT%H:%MZ) · OMP ${omp_latest} · gsd-core ${gsd_core_latest} · ${run_url}"
+            echo "updated issue #${existing}"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "${title}" --body "The scheduled CI run ${run_url} failed against the latest upstreams:
+
+          - @oh-my-pi/pi-coding-agent: **${omp_latest}**
+          - @opengsd/gsd-core: **${gsd_core_latest}**
+
+          Check the failing \`OMP latest host smoke\` job logs. Likely causes:
+
+          - OMP changed its extension/omptype contract (compare the assertions in \`scripts/host-smoke.cjs\`); prior instance: omptype 17.2.8 rejecting mutable static zod defaults (fixed in #22).
+          - gsd-core API drift in the extension bootstrap (\`src/extension.cjs\`).
+
+          To resolve: adapt in a PR, verify host-smoke passes on both the pinned and the latest OMP, then close this issue."
+          fi
