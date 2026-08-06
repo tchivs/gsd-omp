@@ -86,11 +86,11 @@ jobs:
             node scripts/bump-version.cjs "${new_version}"
             git add -A
             git -c user.name="gsd-omp release bot" -c user.email="actions@users.noreply.github.com" commit -m "chore: release gsd-omp v${new_version}"
-            git push -u origin "${branch}"
-            pr_num="$(gh pr create --repo "${{ github.repository }}" --base main --head "${branch}" \
+            git push --force -u origin "${branch}"
+            pr_url="$(gh pr create --repo "${{ github.repository }}" --base main --head "${branch}" \
               --title "chore: release gsd-omp v${new_version}" \
-              --body "Automated release PR created by the Auto-release workflow (bumps package version and README install URLs)." \
-              --json number --jq .number)"
+              --body "Automated release PR created by the Auto-release workflow (bumps package version and README install URLs).")"
+            pr_num="${pr_url##*/}"
             echo "number=${pr_num}" >> "$GITHUB_OUTPUT"
           fi
 
