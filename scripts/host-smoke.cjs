@@ -8,7 +8,8 @@ const path = require('node:path');
 
 const repositoryRoot = path.resolve(__dirname, '..');
 
-const gsdCoreVersion = require('@opengsd/gsd-core/package.json').version;
+const packageManifest = require(path.join(repositoryRoot, 'package.json'));
+const gsdCoreRange = packageManifest.dependencies['@opengsd/gsd-core'];
 const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-host-smoke-'));
 const ompBin = process.env.OMP_BIN || 'omp';
 const gsdOmpBin = process.env.GSD_OMP_BIN;
@@ -49,6 +50,32 @@ function parseJson(output, label) {
   }
 }
 
+function parseVersion(value, label) {
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value);
+  assert.ok(match, `${label} is not a semantic version: ${value}`);
+  return match.slice(1).map(Number);
+}
+
+function compareVersions(left, right) {
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) return left[index] - right[index];
+  }
+  return 0;
+}
+
+function satisfiesCaretRange(version, range) {
+  const rangeMatch = /^\^(\d+)\.(\d+)\.(\d+)$/.exec(range);
+  assert.ok(rangeMatch, `unsupported gsd-core dependency range: ${range}`);
+  const actual = parseVersion(version, 'gsd-core version');
+  const minimum = rangeMatch.slice(1).map(Number);
+  const upperBound = minimum[0] > 0
+    ? [minimum[0] + 1, 0, 0]
+    : minimum[1] > 0
+      ? [0, minimum[1] + 1, 0]
+      : [0, 0, minimum[2] + 1];
+  return compareVersions(actual, minimum) >= 0 && compareVersions(actual, upperBound) < 0;
+}
+
 function parseRpcFrames(output) {
   return output
     .split(/\r?\n/)
@@ -59,7 +86,10 @@ function parseRpcFrames(output) {
 try {
   const install = parseJson(runPlugin(['install', '--root', runtimeRoot, '--json']), 'gsd-omp install');
   assert.equal(install.protocolVersion, 1);
-  assert.ok(install.coreVersion === gsdCoreVersion, `coreVersion ${install.coreVersion} !== expected ${gsdCoreVersion}`);
+  assert.ok(
+    satisfiesCaretRange(install.coreVersion, gsdCoreRange),
+    `coreVersion ${install.coreVersion} is outside declared ${gsdCoreRange}`,
+  );
   assert.ok(install.installed > 50, `expected projected artifacts, received ${install.installed}`);
 
   const doctor = parseJson(runPlugin(['doctor', '--root', runtimeRoot, '--json']), 'gsd-omp doctor');
