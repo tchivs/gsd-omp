@@ -17,7 +17,7 @@ const Eos = require('../src/eos.cjs');
   assert.deepEqual(binding.negotiation.warnings, []);
 });
 
- test('declares all ten EoS axes from the OMP host contract', () => {
+ test('declares all nine EoS axes from the OMP host contract', () => {
   assert.deepEqual(Object.keys(Eos.OMP_AXES).sort(), [
     'commandSurface', 'dispatch', 'effortSurface', 'embeddingMode', 'hookBus',
     'modelMode', 'runtime', 'stateIO', 'transport',

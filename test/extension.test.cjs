@@ -9,7 +9,12 @@ const extension = require('../src/extension.cjs');
 
 function schema() {
   return {
-    default() { return this; },
+    default(value) {
+      if (value !== null && typeof value === 'object') {
+        throw new TypeError('Mutable schema defaults must use a factory');
+      }
+      return this;
+    },
     optional() { return this; },
   };
 }
