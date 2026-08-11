@@ -14,6 +14,7 @@ const { t } = require('../src/locale.cjs');
 const MANIFEST_NAME = '.gsd-omp-manifest.json';
 const GITHUB_REPO = 'tchivs/gsd-omp';
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const RELEASE_PAGE = `https://github.com/${GITHUB_REPO}/releases/latest`;
 
 function sha256(content) {
   return crypto.createHash('sha256').update(content).digest('hex');
@@ -38,11 +39,39 @@ function parseArgs(argv) {
 }
 
 function githubLatestRelease() {
-  const res = spawnSync(
-    process.execPath,
-    ['-e', `fetch('${RELEASE_API}', { headers: { 'User-Agent': 'gsd-omp' } }).then(r => r.json()).then(j => process.stdout.write(JSON.stringify({ tag_name: j.tag_name, tarball_url: j.tarball_url }))).catch(() => process.exit(1))`],
-    { encoding: 'utf8', timeout: 15000 },
-  );
+  const script = `
+const apiUrl = ${JSON.stringify(RELEASE_API)};
+const latestPageUrl = ${JSON.stringify(RELEASE_PAGE)};
+const headers = { 'User-Agent': 'gsd-omp', Accept: 'application/vnd.github+json' };
+const token = process.env.GITHUB_TOKEN || process.env.GH_TOKEN;
+if (token) headers.Authorization = \`Bearer \${token}\`;
+
+async function resolve() {
+  const apiResponse = await fetch(apiUrl, { headers });
+  if (apiResponse.ok) {
+    const release = await apiResponse.json();
+    if (release.tag_name) {
+      process.stdout.write(JSON.stringify({ tag_name: release.tag_name, tarball_url: release.tarball_url }));
+      return;
+    }
+  }
+
+  const pageResponse = await fetch(latestPageUrl, {
+    redirect: 'manual',
+    headers: { 'User-Agent': 'gsd-omp' },
+  });
+  const location = pageResponse.headers.get('location') || '';
+  const match = location.match(/\\/releases\\/tag\\/(v\\d+\\.\\d+\\.\\d+)$/);
+  if (!match) throw new Error('latest release could not be resolved');
+  process.stdout.write(JSON.stringify({ tag_name: match[1] }));
+}
+
+resolve().catch(() => process.exit(1));
+`;
+  const res = spawnSync(process.execPath, ['-e', script], {
+    encoding: 'utf8',
+    timeout: 15000,
+  });
   if (res.status !== 0) throw new Error(t('cli.error.updateCheckFailed'));
   try {
     return JSON.parse(res.stdout);
