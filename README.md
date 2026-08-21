@@ -1,4 +1,5 @@
 # GSD for Oh My Pi
+[![CI](https://img.shields.io/github/actions/workflow/status/tchivs/gsd-omp/ci.yml?branch=main&logo=githubactions&logoColor=white&label=CI)](https://github.com/tchivs/gsd-omp/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/tchivs/gsd-omp?logo=github&label=release)](https://github.com/tchivs/gsd-omp/releases)
 [![License: MIT](https://img.shields.io/github/license/tchivs/gsd-omp?color=blue)](./LICENSE)
 [![Node.js](https://img.shields.io/badge/node-%E2%89%A522-339933?logo=node.js&logoColor=white)](https://nodejs.org)
@@ -6,6 +7,8 @@
 [![OMP EoS](https://img.shields.io/badge/OMP-EoS%20v1-6c31c4)](#eos-contract)
 [![Last Commit](https://img.shields.io/github/last-commit/tchivs/gsd-omp?logo=git&logoColor=white)](https://github.com/tchivs/gsd-omp/commits)
 [![Stars](https://img.shields.io/github/stars/tchivs/gsd-omp?style=social)](https://github.com/tchivs/gsd-omp/stargazers)
+[![Contributors](https://img.shields.io/github/contributors/tchivs/gsd-omp?color=orange&logo=github)](https://github.com/tchivs/gsd-omp/graphs/contributors)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)](https://github.com/tchivs/gsd-omp/pulls)
 
 **English** · [简体中文](./README.zh-CN.md)
 
