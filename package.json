@@ -21,11 +21,11 @@
     "prepack": "npm run lint && npm test"
   },
   "dependencies": {
-    "@opengsd/gsd-core": "^1.10.0"
+    "@opengsd/gsd-core": "^1.11.0"
   },
   "engines": {
-    "node": ">=22.0.0",
-    "gsd": ">=1.10.0"
+    "node": ">=24.0.0",
+    "gsd": ">=1.11.0"
   },
   "repository": {
     "type": "git",
