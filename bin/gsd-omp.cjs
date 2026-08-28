@@ -12,6 +12,11 @@ const packageJson = require('../package.json');
 const { t } = require('../src/locale.cjs');
 
 const MANIFEST_NAME = '.gsd-omp-manifest.json';
+const LEGACY_EXTENSION_PATHS = Object.freeze([
+  path.join('extensions', 'gsd-omp.cjs'),
+  path.join('extensions', 'gsd-omp.cjs.bak-mutable-default'),
+]);
+const LEGACY_EXTENSION_MARKER = 'GSD extension for Pi-compatible hosts';
 const GITHUB_REPO = 'tchivs/gsd-omp';
 const RELEASE_API = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 const RELEASE_PAGE = `https://github.com/${GITHUB_REPO}/releases/latest`;
@@ -62,6 +67,27 @@ function safeTarget(root, filePath, errorFactory) {
 
 function safeArtifactTarget(root, filePath) {
   return safeTarget(root, filePath, (target) => new Error(t('cli.error.refusingOverwrite', { path: target })));
+}
+function legacyArtifactFiles(root) {
+  return LEGACY_EXTENSION_PATHS.flatMap((relativePath) => {
+    const target = safeArtifactTarget(root, relativePath);
+    let stat;
+    try {
+      stat = fs.lstatSync(target);
+    } catch (error) {
+      if (error?.code === 'ENOENT') return [];
+      throw error;
+    }
+    if (!stat.isFile() || stat.isSymbolicLink()) return [];
+    let content;
+    try {
+      content = fs.readFileSync(target, 'utf8');
+    } catch {
+      return [];
+    }
+    if (!content.includes(LEGACY_EXTENSION_MARKER)) return [];
+    return [{ path: relativePath, sha256: sha256(content) }];
+  });
 }
 
 function validateManifest(root, manifest) {
@@ -197,7 +223,7 @@ function update({ root: rootOverride, force = false, latestRelease, json = false
 }
 
 function compareVersions(left, right) {
-  const parse = (value) => String(value || '').match(/^(\\d+)\\.(\\d+)\\.(\\d+)/)?.slice(1).map(Number) || null;
+  const parse = (value) => String(value || '').match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number) || null;
   const a = parse(left);
   const b = parse(right);
   if (!a || !b) return 0;
@@ -340,7 +366,10 @@ function install({ root: rootOverride, force = false } = {}) {
   const previous = readManifest(root);
   const artifacts = desiredArtifacts(root, eos.coreRoot);
   const artifactPaths = new Set(artifacts.map((artifact) => artifact.relativePath));
-  const staleFiles = (previous?.files || []).filter((file) => !artifactPaths.has(file.path));
+  const staleFiles = [...new Map([
+    ...(previous?.files || []).filter((file) => !artifactPaths.has(file.path)),
+    ...legacyArtifactFiles(root),
+  ].map((file) => [file.path, file])).values()];
   const previousFiles = new Map((previous?.files || []).map((file) => [file.path, file.sha256]));
   const checkOwnership = (filePath, expectedHash) => {
     const target = safeArtifactTarget(root, filePath);
@@ -483,4 +512,4 @@ if (require.main === module) {
   }
 }
 
-module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall, update, githubLatestRelease, globalPrefix };
+module.exports = { descriptor, doctor, install, main, parseArgs, runtimeRoot, uninstall, update, githubLatestRelease, globalPrefix, compareVersions };

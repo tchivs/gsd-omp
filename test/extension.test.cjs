@@ -50,7 +50,8 @@ function mockPi() {
     assert.equal(pi.commands.has('gsd'), true);
     assert.equal(pi.commands.has('gsd-next'), true);
     assert.equal(pi.commands.has('gsd-plan-phase'), true);
-    assert.equal(pi.commands.size >= 39, true);
+    assert.equal(pi.commands.size >= 40, true);
+    assert.equal(pi.commands.has('omp-native'), true);
     assert.equal(pi.tools.has('gsd_invoke'), true);
     assert.equal(pi.tools.get('gsd_invoke').loadMode, 'discoverable');
     assert.equal(pi.events.has('session_start'), true);
@@ -277,15 +278,40 @@ test('failed GSD task request releases tracked names', async () => {
 });
 
 
-test('does not render the low-signal active-task banner in the ordinary widget', async () => {
+test('renders concise OMP-native progress instead of a raw task-count banner', async () => {
   const root = gsdProjectRoot();
   try {
+    fs.writeFileSync(
+      path.join(root, '.planning', 'STATE.md'),
+      '---\nstatus: executing\nprogress:\n  total_plans: 4\n  completed_plans: 2\n---\nPhase: 2 of 3 (Build)\nStatus: executing\n',
+    );
     const pi = mockPi();
     extension(pi, { runtime: 'omp', runtimeRoot: root });
     const ctx = { cwd: root };
     await pi.events.get('tool_call')(taskSpawnCall('call_widget', ['Phase1Plan06Executor']), ctx);
-    const lines = extension._internals.widgetLines(root);
-    assert.equal(lines.some((line) => line.includes('个原生任务运行中') || line.includes('native task')), false);
+    const plain = extension._internals.widgetLines(root).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
+    assert.match(plain, /GSD · OMP Native/);
+    assert.match(plain, /OMP native execution active/);
+    assert.match(plain, /Progress .*Plans 2\/4 complete/);
+    assert.match(plain, /\/omp-native/);
+    assert.doesNotMatch(plain, /native tasks running/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+test('omp-native reports native execution status and entry points', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('omp-native').handler('', { cwd: root });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].customType, 'omp-native-status');
+    assert.match(sent[0].content, /GSD · OMP Native/);
+    assert.match(sent[0].content, /Dispatch: OMP native task/);
+    assert.match(sent[0].content, /\/gsd-execute-phase/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
