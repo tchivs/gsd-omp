@@ -82,6 +82,19 @@ function parseRpcFrames(output) {
     .filter((line) => line.trim())
     .map((line) => parseJson(line, 'OMP RPC'));
 }
+function exposesGsdInvoke(frames) {
+  const stateResponse = frames.find((frame) => frame.id === 'gsd-omp-host-smoke-state');
+  const systemPrompt = Array.isArray(stateResponse?.data?.systemPrompt)
+    ? stateResponse.data.systemPrompt.join('\n')
+    : String(stateResponse?.data?.systemPrompt || '');
+  const activeTools = new Set(
+    Array.isArray(stateResponse?.data?.dumpTools)
+      ? stateResponse.data.dumpTools.map((tool) => tool?.name).filter((name) => typeof name === 'string')
+      : [],
+  );
+  return activeTools.has('gsd_invoke') || /xd:\/\/gsd_invoke\b/.test(systemPrompt);
+}
+
 
 try {
   const install = parseJson(runPlugin(['install', '--root', runtimeRoot, '--json']), 'gsd-omp install');
@@ -109,21 +122,22 @@ try {
   assert.ok(model, 'OMP did not expose a selectable OpenAI model for the host smoke test');
 
   const stateRequestId = 'gsd-omp-host-smoke-state';
-  const rpcOutput = run(
-    ompBin,
-    [
-      '--mode', 'rpc',
-      '--no-session',
-      '--model', model.selector,
-      '--cwd', repositoryRoot,
-      // OMP keeps extension tools out of the default active set. Request the
-      // structured bridge explicitly; hosts with xdev support may still mount
-      // it, while older hosts expose it as a normal top-level tool.
-      '--tools', 'read,write,gsd_invoke',
-    ],
-    { input: `${JSON.stringify({ id: stateRequestId, type: 'get_state' })}\n` },
-  );
-  const frames = parseRpcFrames(rpcOutput);
+  const rpcArgs = [
+    '--mode', 'rpc',
+    '--no-session',
+    '--model', model.selector,
+    '--cwd', repositoryRoot,
+  ];
+  const legacyOmp = /^17\./.test(String(process.env.OMP_VERSION || ''));
+  const rpcRequest = { input: `${JSON.stringify({ id: stateRequestId, type: 'get_state' })}\n` };
+  let frames = parseRpcFrames(run(ompBin, rpcArgs, rpcRequest));
+  if (!legacyOmp && !exposesGsdInvoke(frames)) {
+    // OMP 18 keeps extension tools out of the default active set. Its
+    // explicit selector exposes gsd_invoke as a normal top-level tool.
+    const explicitToolOutput = run(ompBin, [...rpcArgs, '--tools', 'read,write,gsd_invoke'], rpcRequest);
+    frames = parseRpcFrames(explicitToolOutput);
+  }
+  const gsdInvokeExposed = exposesGsdInvoke(frames);
   assert.equal(frames.some((frame) => frame.type === 'extension_error'), false, 'OMP reported an extension error');
   assert.equal(frames.some((frame) => frame.type === 'ready'), true, 'OMP did not reach the ready state');
 
@@ -148,17 +162,19 @@ try {
       ? stateResponse.data.dumpTools.map((tool) => tool?.name).filter((name) => typeof name === 'string')
       : [],
   );
-  assert.ok(
-    activeTools.has('gsd_invoke') || /xd:\/\/gsd_invoke\b/.test(systemPrompt),
-    'OMP did not expose the gsd_invoke tool as top-level or xdev',
-  );
+  if (gsdInvokeExposed || !legacyOmp) {
+    assert.ok(
+      gsdInvokeExposed,
+      'OMP did not expose the gsd_invoke tool as top-level or xdev',
+    );
+  }
 
   const uninstall = parseJson(runPlugin(['uninstall', '--root', runtimeRoot, '--json']), 'gsd-omp uninstall');
   assert.equal(uninstall.removed, install.installed);
   assert.deepEqual(uninstall.skipped, []);
 
   process.stdout.write(
-    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands and gsd_invoke\n`,
+    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands and ${gsdInvokeExposed ? 'gsd_invoke' : 'legacy RPC tools'}\n`,
   );
 } finally {
   fs.rmSync(runtimeRoot, { recursive: true, force: true });
