@@ -54,7 +54,7 @@ The plugin also registers the `gsd_invoke` tool for structured access to the pub
 
 ## Commands
 
-The plugin registers 40 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
+The plugin registers 39 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
 
 
 ### Entry & status
@@ -64,7 +64,6 @@ The plugin registers 40 slash commands and the `gsd_invoke` tool. Commands are g
 | `/gsd-next` | Show or prepare the next localized GSD action |
 | `/gsd-progress` | Show GSD progress or advance through its gated next-step workflow |
 | `/gsd-status` | Show a localized GSD project summary |
-| `/omp-native` | Show OMP-native task execution status and entry points |
 | `/gsd <family> <subcommand> [args]` | Invoke the public `gsd-tools` CLI directly |
 
 ### Project lifecycle

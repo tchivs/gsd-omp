@@ -148,9 +148,10 @@ try {
       .filter((command) => command.source === 'extension')
       .map((command) => [command.name, command]),
   );
-  for (const command of ['gsd', 'gsd-next', 'gsd-plan-phase', 'gsd-status', 'omp-native']) {
+  for (const command of ['gsd', 'gsd-next', 'gsd-plan-phase', 'gsd-status']) {
     assert.ok(extensionCommands.has(command), `OMP did not load extension command /${command}`);
   }
+  assert.equal(extensionCommands.has('omp-native'), false, 'OMP should not expose the internal omp-native command');
 
   const stateResponse = frames.find((frame) => frame.id === stateRequestId);
   assert.equal(stateResponse?.success, true, 'OMP did not return its RPC session state');

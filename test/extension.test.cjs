@@ -50,8 +50,8 @@ function mockPi() {
     assert.equal(pi.commands.has('gsd'), true);
     assert.equal(pi.commands.has('gsd-next'), true);
     assert.equal(pi.commands.has('gsd-plan-phase'), true);
-    assert.equal(pi.commands.size >= 40, true);
-    assert.equal(pi.commands.has('omp-native'), true);
+    assert.equal(pi.commands.size >= 39, true);
+    assert.equal(pi.commands.has('omp-native'), false);
     assert.equal(pi.tools.has('gsd_invoke'), true);
     assert.equal(pi.tools.get('gsd_invoke').loadMode, 'discoverable');
     assert.equal(pi.events.has('session_start'), true);
@@ -293,25 +293,8 @@ test('renders concise OMP-native progress instead of a raw task-count banner', a
     assert.match(plain, /GSD · OMP Native/);
     assert.match(plain, /OMP native execution active/);
     assert.match(plain, /Progress .*Plans 2\/4 complete/);
-    assert.match(plain, /\/omp-native/);
+    assert.match(plain, /\/gsd-status/);
     assert.doesNotMatch(plain, /native tasks running/);
-  } finally {
-    fs.rmSync(root, { recursive: true, force: true });
-  }
-});
-test('omp-native reports native execution status and entry points', async () => {
-  const root = gsdProjectRoot();
-  try {
-    const sent = [];
-    const pi = mockPi();
-    pi.sendMessage = async (message) => { sent.push(message); };
-    extension(pi, { runtime: 'omp', runtimeRoot: root });
-    await pi.commands.get('omp-native').handler('', { cwd: root });
-    assert.equal(sent.length, 1);
-    assert.equal(sent[0].customType, 'omp-native-status');
-    assert.match(sent[0].content, /GSD · OMP Native/);
-    assert.match(sent[0].content, /Dispatch: OMP native task/);
-    assert.match(sent[0].content, /\/gsd-execute-phase/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -339,6 +322,8 @@ test('gsd-next does not advance while a native GSD task is still running', async
     assert.equal(sent.length, 1, 'gsd-next emitted exactly one message');
     assert.equal(sent[0].customType, 'gsd-native-tasks-active',
       'gsd-next reports active tasks instead of dispatching the saved continuation');
+    assert.match(sent[0].content, /\/gsd-status/);
+    assert.doesNotMatch(sent[0].content, /\/omp-native/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
