@@ -615,15 +615,12 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     return activeGsdTaskIds.get(path.resolve(cwd))?.size || 0;
   }
 
-  function nativeTaskActivityIds(cwd) {
-    return [...(activeGsdTaskIds.get(path.resolve(cwd)) || [])].filter((taskId) => typeof taskId === 'string' && taskId);
-  }
 
   function nativeTaskActivityLines(count, chinese) {
     if (!count) return [];
     return [chinese
-      ? `OMP 原生执行：${count} 个任务 · 使用 /omp-native 查看详情。`
-      : `OMP native execution: ${count} tasks · use /omp-native for details.`];
+      ? `OMP 原生执行：${count} 个任务 · 使用 /gsd-status 查看详情。`
+      : `OMP native execution: ${count} tasks · use /gsd-status for details.`];
   }
 
 
@@ -1612,7 +1609,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (state?.unreadable) {
       const rows = [activeRow, recoveryRow].filter(Boolean);
       const lines = [widgetColor(WIDGET_COLORS.danger, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
-      if (activeRow || recoveryRow) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, activeRow ? '/omp-native' : recovery.command)}`);
+      if (activeRow || recoveryRow) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, activeRow ? '/gsd-status' : recovery.command)}`);
       return lines;
     }
     const hasRisks = Boolean(state?.blockers || state?.concerns);
@@ -1634,7 +1631,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (checkpointRow) rows.push(checkpointRow);
     if (action) rows.push(action.label.slice(0, 92));
     const lines = [heading, ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
-    const command = activeTaskCount ? '/omp-native' : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
+    const command = activeTaskCount ? '/gsd-status' : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
     if (command) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, command)}`);
     return lines;
   }
@@ -1679,48 +1676,6 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         ...checkpointLines,
       ].join('\n');
   }
-  function nativeToolAvailable(pi, toolName) {
-    if (typeof pi?.getAllTools !== 'function') return null;
-    try {
-      const tools = pi.getAllTools();
-      return Array.isArray(tools) && tools.some((tool) => tool?.name === toolName);
-    } catch {
-      return null;
-    }
-  }
-
-  function nativeStatusSummary(cwd, pi) {
-    const chinese = usesChinese(cwd);
-    const state = stateSnapshot(cwd);
-    const activeTaskIds = nativeTaskActivityIds(cwd);
-    const progress = state && !state.unreadable ? planProgress(cwd, state) : null;
-    const taskStatus = activeTaskIds.length
-      ? chinese ? `${activeTaskIds.length} 个任务运行中` : `${activeTaskIds.length} task${activeTaskIds.length === 1 ? '' : 's'} running`
-      : chinese ? '空闲，可开始执行' : 'Idle and ready';
-    const lines = [
-      'GSD · OMP Native',
-      chinese ? `状态：${taskStatus}` : `Status: ${taskStatus}`,
-    ];
-    if (progress) {
-      lines.push(chinese
-        ? `进度：${progress.bar} ${localizedPlanProgress(progress, cwd, true)}`
-        : `Progress: ${progress.bar} ${localizedPlanProgress(progress, cwd, true)}`);
-    }
-    const gsdInvoke = nativeToolAvailable(pi, 'gsd_invoke');
-    if (gsdInvoke !== null) {
-      lines.push(chinese
-        ? `gsd_invoke：${gsdInvoke ? '可用' : '当前上下文未挂载（/gsd 仍可用）'}`
-        : `gsd_invoke: ${gsdInvoke ? 'available' : 'not mounted in this context (/gsd remains available)'}`);
-    }
-    lines.push(chinese
-      ? '调度：OMP 原生 task → job；完成后使用 /gsd-next。'
-      : 'Dispatch: OMP native task → job; use /gsd-next after settlement.');
-    lines.push(chinese
-      ? '入口：/gsd-execute-phase <阶段> · /gsd-status'
-      : 'Entry points: /gsd-execute-phase <phase> · /gsd-status');
-    return lines.join('\n');
-  }
-
   function widgetColor(code, text) {
     return `\u001b[${code}m${text}\u001b[0m`;
   }
@@ -2144,8 +2099,8 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
     await pi.sendMessage({
       customType: 'gsd-native-tasks-active',
       content: chinese
-        ? `OMP 原生执行仍在进行（${count} 个任务）。使用 /omp-native 查看状态；完成后再执行 /gsd-next。`
-        : `OMP native execution is still running (${count} task${count === 1 ? '' : 's'}). Use /omp-native for status; run /gsd-next after settlement.`,
+        ? `OMP 原生执行仍在进行（${count} 个任务）。使用 /gsd-status 查看状态；完成后再执行 /gsd-next。`
+        : `OMP native execution is still running (${count} task${count === 1 ? '' : 's'}). Use /gsd-status for status; run /gsd-next after settlement.`,
       display: true,
     }, { triggerTurn: false });
   }
@@ -3894,16 +3849,6 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
       await pi.sendMessage({
         customType: 'gsd-status-summary',
         content: localizedStatusSummary(ctx.cwd),
-        display: true,
-      }, { triggerTurn: false });
-    },
-  });
-  pi.registerCommand('omp-native', {
-    description: 'Show OMP-native GSD execution status and entry points.',
-    handler: async (_input, ctx) => {
-      await pi.sendMessage({
-        customType: 'omp-native-status',
-        content: nativeStatusSummary(ctx.cwd, pi),
         display: true,
       }, { triggerTurn: false });
     },
