@@ -29,12 +29,44 @@ function resolveEngineRoot(startDir) {
       if (parent === dir) break;
       dir = parent;
     }
-    throw new Error('gsd-omp: @opengsd/gsd-core >=1.8.0 is required');
+    throw new Error('gsd-omp: @opengsd/gsd-core >=1.11.0 is required');
   }
 }
 
 const ENGINE_ROOT = resolveEngineRoot(__dirname);
 const GSD_CORE = path.join(ENGINE_ROOT, 'gsd-core');
+const MAX_CAPTURED_OUTPUT = 4 * 1024 * 1024;
+const OUTPUT_TRUNCATION_MARKER = '\n[… output truncated …]';
+
+let corePlanningPaths;
+try {
+  ({ planningPaths: corePlanningPaths } = require(path.join(GSD_CORE, 'bin', 'lib', 'planning-workspace.cjs')));
+} catch {
+  corePlanningPaths = null;
+}
+
+function resolvedPlanningPaths(cwd) {
+  const flat = path.join(cwd, '.planning');
+  const fallback = {
+    planning: flat,
+    state: path.join(flat, 'STATE.md'),
+    roadmap: path.join(flat, 'ROADMAP.md'),
+    project: path.join(flat, 'PROJECT.md'),
+    config: path.join(flat, 'config.json'),
+    phases: path.join(flat, 'phases'),
+  };
+  if (!corePlanningPaths) return fallback;
+  try {
+    return { ...fallback, ...corePlanningPaths(cwd) };
+  } catch {
+    return fallback;
+  }
+}
+
+function planningFilePath(cwd, name) {
+  const paths = resolvedPlanningPaths(cwd);
+  return paths[name] || path.join(paths.planning, name);
+}
 
 // ── top-level command families (gsd-tools.cjs TOP_LEVEL_USAGE) ─────────────
 // readCmdNames() (scripts/fix-slash-commands.cjs) reads commands/, which pi
@@ -99,13 +131,13 @@ function parseGsdCommandArgs(rawArgs) {
     tokenize = (s) => String(s || '').split(/\s+/).filter(Boolean);
   }
   const tokens = tokenize(typeof rawArgs === 'string' ? rawArgs : '');
+  const family = tokens[0] || '--help';
   return {
-    // Empty args → dispatch gsd-tools.cjs's own --help surface (a real,
-    // working, ok:true default — NOT the 'query'/'help' pairing the original
-    // #1944 cut used, which is not a valid gsd-tools.cjs command).
-    family: tokens[0] || '--help',
+    // Empty args and family-only input dispatch the CLI's own help surface;
+    // do not pass an undefined subcommand to child_process.spawn.
+    family,
     subcommand: tokens[1],
-    args: tokens.slice(2),
+    args: tokens.length > 1 ? tokens.slice(2) : [],
   };
 }
 
@@ -210,6 +242,7 @@ function runHook(hookFile, payload, opts = {}) {
 }
 
 const HEAD_ADVANCING_COMMAND = /git (?:commit|merge|pull|rebase --continue|cherry-pick)|gsd-tools query commit(?:\s|$)/;
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed', 'cancelled', 'aborted', 'error', 'errored', 'succeeded', 'success', 'done', 'terminated']);
 
 function gitOutput(cwd, args) {
   try {
@@ -222,7 +255,7 @@ function gitOutput(cwd, args) {
 
 function readProjectConfig(cwd) {
   try {
-    return JSON.parse(fs.readFileSync(path.join(cwd, '.planning', 'config.json'), 'utf8'));
+    return JSON.parse(fs.readFileSync(planningFilePath(cwd, 'config'), 'utf8'));
   } catch {
     return null;
   }
@@ -261,12 +294,22 @@ function graphifyDefaultBranch(cwd, config) {
 }
 
 function graphifyLockIsLive(lockPath) {
-  let pid;
+  let raw;
   try {
-    pid = Number.parseInt(fs.readFileSync(lockPath, 'utf8').trim(), 10);
-  } catch {
-    return false;
+    raw = fs.readFileSync(lockPath, 'utf8');
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    return true;
   }
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    try {
+      return Date.now() - fs.statSync(lockPath).mtimeMs < 1_000;
+    } catch {
+      return true;
+    }
+  }
+  const pid = /^\d+$/.test(trimmed) ? Number.parseInt(trimmed, 10) : 0;
   if (Number.isInteger(pid) && pid > 0) {
     try {
       process.kill(pid, 0);
@@ -305,6 +348,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   const os = require('node:os');
   const advisedFiles = new Set();
   const activeGsdTaskIds = new Map();
+  const activeGsdTaskRefCounts = new Map();
   const activeGsdTaskIdsByCall = new Map();
   const nativePhaseExecutions = new Map();
   const graphifyHeadByCall = new Map();
@@ -322,6 +366,36 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     return taskIds;
   }
 
+  function taskRefCountsFor(cwd) {
+    const projectPath = path.resolve(cwd);
+    let refs = activeGsdTaskRefCounts.get(projectPath);
+    if (!refs) {
+      refs = new Map();
+      activeGsdTaskRefCounts.set(projectPath, refs);
+    }
+    return refs;
+  }
+
+  function retainTaskId(cwd, taskId) {
+    taskIdsFor(cwd).add(taskId);
+    const refs = taskRefCountsFor(cwd);
+    refs.set(taskId, (refs.get(taskId) || 0) + 1);
+  }
+
+  function releaseTaskId(cwd, taskId) {
+    const projectPath = path.resolve(cwd);
+    const refs = activeGsdTaskRefCounts.get(projectPath);
+    const count = refs?.get(taskId) || 0;
+    if (count > 1) refs.set(taskId, count - 1);
+    else {
+      refs?.delete(taskId);
+      activeGsdTaskIds.get(projectPath)?.delete(taskId);
+    }
+    if (refs?.size === 0) activeGsdTaskRefCounts.delete(projectPath);
+    const taskIds = activeGsdTaskIds.get(projectPath);
+    if (taskIds?.size === 0) activeGsdTaskIds.delete(projectPath);
+  }
+
   function taskCallsFor(cwd) {
     const projectPath = path.resolve(cwd);
     let taskCalls = activeGsdTaskIdsByCall.get(projectPath);
@@ -337,7 +411,11 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const taskCalls = activeGsdTaskIdsByCall.get(projectPath);
     if (!taskCalls) return;
     for (const [callId, taskIds] of taskCalls) {
-      const remaining = taskIds.filter((taskId) => !settledIds.has(taskId));
+      const remaining = [...taskIds];
+      for (const settledId of settledIds) {
+        const index = remaining.indexOf(settledId);
+        if (index >= 0) remaining.splice(index, 1);
+      }
       if (remaining.length) taskCalls.set(callId, remaining);
       else taskCalls.delete(callId);
     }
@@ -347,6 +425,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function releaseGsdProjectRuntimeState(cwd) {
     const projectPath = path.resolve(cwd);
     activeGsdTaskIds.delete(projectPath);
+    activeGsdTaskRefCounts.delete(projectPath);
     activeGsdTaskIdsByCall.delete(projectPath);
     nativePhaseExecutions.delete(projectPath);
     onboardingPromptCwds.delete(projectPath);
@@ -384,15 +463,19 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const graphifyBin = executableOnPath('graphify');
     if (!graphifyBin) return false;
 
-    const graphDir = path.join(tracked.cwd, '.planning', 'graphs');
+    const graphDir = path.join(resolvedPlanningPaths(tracked.cwd).planning, 'graphs');
     const lockPath = path.join(graphDir, '.rebuild.lock');
     const statusPath = path.join(graphDir, '.last-build-status.json');
-    fs.mkdirSync(graphDir, { recursive: true });
+    try {
+      fs.mkdirSync(graphDir, { recursive: true });
+    } catch {
+      return false;
+    }
     if (graphifyLockIsLive(lockPath)) return false;
 
     const startedAt = Date.now();
     try {
-      fs.writeFileSync(lockPath, String(process.pid));
+      fs.writeFileSync(lockPath, String(process.pid), { encoding: 'utf8', flag: 'wx' });
       writeGraphifyStatus(statusPath, {
         ts: new Date(startedAt).toISOString(),
         status: 'running',
@@ -433,15 +516,15 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   function trackGsdTaskRequest(event, cwd) {
     const input = event?.input;
-    if (event?.toolName !== 'task' || !input || typeof input !== 'object') return;
+    if (event?.toolName !== 'task' || typeof event.toolCallId !== 'string' || !event.toolCallId || !input || typeof input !== 'object') return;
     const tasks = Array.isArray(input.tasks) ? input.tasks : [input];
     const taskIds = tasks.flatMap((task) =>
       typeof task?.agent === 'string' && task.agent.startsWith('gsd-') && typeof task?.name === 'string' && task.name
         ? [task.name]
         : []);
     if (!taskIds.length) return;
-    for (const taskId of taskIds) taskIdsFor(cwd).add(taskId);
-    if (typeof event.toolCallId === 'string' && event.toolCallId) taskCallsFor(cwd).set(event.toolCallId, taskIds);
+    for (const taskId of taskIds) retainTaskId(cwd, taskId);
+    taskCallsFor(cwd).set(event.toolCallId, taskIds);
   }
 
   function trackGsdTaskProgress(event, cwd) {
@@ -451,13 +534,16 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     let taskIds = activeGsdTaskIds.get(projectPath);
     for (const task of progress) {
       if (typeof task?.agent !== 'string' || !task.agent.startsWith('gsd-') || typeof task.id !== 'string' || !task.id) continue;
-      if (['completed', 'failed', 'aborted'].includes(task.status)) {
-        taskIds?.delete(task.id);
+      const status = String(task.status || '').toLowerCase();
+      if (TERMINAL_JOB_STATUSES.has(status)) {
+        releaseTaskId(cwd, task.id);
         forgetTaskCallIds(cwd, new Set([task.id]));
         continue;
       }
-      taskIds ||= taskIdsFor(cwd);
-      taskIds.add(task.id);
+      if (!taskIds?.has(task.id)) {
+        retainTaskId(cwd, task.id);
+        taskIds = activeGsdTaskIds.get(projectPath);
+      }
     }
     if (taskIds?.size === 0) activeGsdTaskIds.delete(projectPath);
   }
@@ -471,7 +557,11 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (!taskIds) return false;
     const settledIds = new Set();
     for (const job of jobs) {
-      if (job?.status !== 'running' && typeof job?.id === 'string' && taskIds.delete(job.id)) settledIds.add(job.id);
+      const status = String(job?.status || '').toLowerCase();
+      if (TERMINAL_JOB_STATUSES.has(status) && typeof job?.id === 'string' && taskIds.has(job.id)) {
+        releaseTaskId(cwd, job.id);
+        settledIds.add(job.id);
+      }
     }
     if (settledIds.size) forgetTaskCallIds(cwd, settledIds);
     if (taskIds.size === 0) activeGsdTaskIds.delete(projectPath);
@@ -484,11 +574,9 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const taskCalls = activeGsdTaskIdsByCall.get(projectPath);
     const taskIds = taskCalls?.get(event.toolCallId);
     if (!taskIds) return false;
-    const activeTaskIds = activeGsdTaskIds.get(projectPath);
-    for (const taskId of taskIds) activeTaskIds?.delete(taskId);
+    for (const taskId of taskIds) releaseTaskId(cwd, taskId);
     taskCalls.delete(event.toolCallId);
     if (taskCalls.size === 0) activeGsdTaskIdsByCall.delete(projectPath);
-    if (activeTaskIds?.size === 0) activeGsdTaskIds.delete(projectPath);
     return true;
   }
   // Detached GSD tasks (OMP's execute/plan dispatch) return at spawn time with
@@ -503,27 +591,24 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const taskCalls = activeGsdTaskIdsByCall.get(projectPath);
     const trackedIds = taskCalls?.get(event.toolCallId);
     if (!trackedIds?.length) return;
-    const taskIds = activeGsdTaskIds.get(projectPath);
     const asyncInfo = event?.details?.async;
     if (asyncInfo && asyncInfo.state === 'running' && typeof asyncInfo.jobId === 'string' && asyncInfo.jobId) {
       // Spawn ack for a detached job: swap name -> jobId so the later job event
       // (releaseSettledGsdTasks, keyed on jobId) can release it.
       const jobId = asyncInfo.jobId;
-      for (const id of trackedIds) taskIds?.delete(id);
-      taskIds?.add(jobId);
+      for (const id of trackedIds) releaseTaskId(cwd, id);
+      retainTaskId(cwd, jobId);
       taskCalls.set(event.toolCallId, [jobId]);
       return;
     }
     // Synchronous completion backstop: final results present means the call is
     // terminal. Gated on results[] so a detached spawn ack lacking async
-    // metadata is not cleared prematurely. (trackGsdTaskProgress already clears
-    // terminal progress entries; this cleans the call map too.)
+    // metadata is not cleared prematurely.
     const results = event?.details?.results;
     if (!Array.isArray(results) || !results.length) return;
-    for (const id of trackedIds) taskIds?.delete(id);
+    for (const id of trackedIds) releaseTaskId(cwd, id);
     taskCalls.delete(event.toolCallId);
     if (taskCalls.size === 0) activeGsdTaskIdsByCall.delete(projectPath);
-    if (taskIds && taskIds.size === 0) activeGsdTaskIds.delete(projectPath);
   }
 
   function nativeTaskActivityCount(cwd) {
@@ -548,18 +633,41 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function nativeMutationPaths(event) {
     const input = event?.input || {};
     if (['edit', 'write'].includes(event?.toolName)) return [input.path || input.filePath || input.file_path || input.file || ''];
-    if (['ast_edit', 'ast-edit'].includes(event?.toolName)) return Array.isArray(input.paths) ? input.paths : [input.path || ''];
+    if (['ast_edit', 'ast-edit'].includes(event?.toolName)) return Array.isArray(input.paths) && input.paths.length ? input.paths : [input.path || ''];
     if (event?.toolName === 'lsp' && (['rename', 'rename_file'].includes(input.action) || (input.action === 'code_actions' && input.apply === true))) {
-      return [input.file || '', input.new_name || ''].filter(Boolean);
+      const paths = [input.file || input.path || '', input.new_name || input.newName || ''];
+      if (input.action === 'code_actions' && Array.isArray(input.edits)) {
+        for (const edit of input.edits) paths.push(edit?.file || edit?.path || '');
+      }
+      return paths.filter(Boolean).length ? paths.filter(Boolean) : [''];
     }
     return null;
   }
 
+  function hasSymlinkComponent(cwd, target) {
+    const projectRoot = path.resolve(cwd);
+    const relative = path.relative(projectRoot, target);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+    let current = projectRoot;
+    for (const segment of relative.split(path.sep)) {
+      if (!segment) continue;
+      current = path.join(current, segment);
+      try {
+        if (fs.lstatSync(current).isSymbolicLink()) return true;
+      } catch (error) {
+        if (error?.code === 'ENOENT') break;
+        return true;
+      }
+    }
+    return false;
+  }
+
   function isPlanningPath(filePath, cwd) {
     if (typeof filePath !== 'string' || !filePath) return false;
-    const planningRoot = path.resolve(cwd, '.planning');
+    const planningRoot = path.resolve(resolvedPlanningPaths(cwd).planning);
     const resolved = path.resolve(cwd, filePath);
-    return resolved === planningRoot || resolved.startsWith(`${planningRoot}${path.sep}`);
+    const inside = resolved === planningRoot || resolved.startsWith(`${planningRoot}${path.sep}`);
+    return inside && !hasSymlinkComponent(cwd, resolved);
   }
 
   function nativePhaseWriteBlock(event, cwd) {
@@ -589,7 +697,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         if (parent === dir) break;
         dir = parent;
       }
-      throw new Error('gsd-omp: @opengsd/gsd-core >=1.8.0 is required');
+      throw new Error('gsd-omp: @opengsd/gsd-core >=1.11.0 is required');
     }
   }
 
@@ -605,7 +713,8 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   // GSD agent missing. Point the check at the plugin's real projection
   // (~/.omp/agent/agents) so init.progress / init.new-project stop warning
   // about unavailable research/roadmap agents.
-  const agentsDir = process.env.GSD_AGENTS_DIR || path.join(options.runtimeRoot || path.join(os.homedir(), '.omp', 'agent'), 'agents');
+  const runtimeRoot = path.resolve(options.runtimeRoot || path.join(os.homedir(), '.omp', 'agent'));
+  const agentsDir = process.env.GSD_AGENTS_DIR || path.join(runtimeRoot, 'agents');
   if (!process.env.GSD_AGENTS_DIR) process.env.GSD_AGENTS_DIR = agentsDir;
 
   function parseCommandLine(input) {
@@ -620,49 +729,92 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function invokeAsync({ family = 'query', subcommand = 'help', args = [], cwd = process.cwd(), raw = false, signal }) {
     if (!CLI_PATH) return Promise.resolve({ ok: false, stdout: '', stderr: `GSD CLI is unavailable beneath ${ENGINE_ROOT}`, exitCode: 1, cancelled: false });
     const { spawn } = require('node:child_process');
-    const cliArgs = [CLI_PATH, family, subcommand, ...args];
+    const commandFamily = typeof family === 'string' && family ? family : 'query';
+    const commandArgs = Array.isArray(args) ? args : [];
+    const cliArgs = [CLI_PATH];
+    if (commandFamily === '--help' || commandFamily === '-h') cliArgs.push(commandFamily);
+    else cliArgs.push(commandFamily, subcommand || 'help', ...commandArgs);
     if (raw) cliArgs.push('--raw');
     return new Promise((resolve) => {
-      const child = spawn(process.execPath, cliArgs, { cwd, env: { ...process.env, GSD_RUNTIME: 'omp', GSD_AGENTS_DIR: agentsDir }, stdio: ['ignore', 'pipe', 'pipe'] });
+      let child;
       let stdout = '';
       let stderr = '';
-      let cancelled = false;
-      const abort = () => {
-        cancelled = true;
-        child.kill('SIGTERM');
+      const appendOutput = (current, chunk) => {
+        if (current.length >= MAX_CAPTURED_OUTPUT) return current;
+        const value = String(chunk);
+        const available = MAX_CAPTURED_OUTPUT - OUTPUT_TRUNCATION_MARKER.length - current.length;
+        if (value.length <= available) return current + value;
+        return current + value.slice(0, Math.max(0, available)) + OUTPUT_TRUNCATION_MARKER;
       };
-      if (signal?.aborted) abort();
-      signal?.addEventListener('abort', abort, { once: true });
+      let cancelled = false;
+      let settled = false;
+      let killTimer;
+      const abortListener = () => {
+        cancelled = true;
+        try { child.kill('SIGTERM'); } catch { /* close/error will settle the request */ }
+        killTimer = setTimeout(() => {
+          try { child.kill('SIGKILL'); } catch { /* already exited */ }
+          finish(1);
+        }, 250);
+      };
+      const cleanup = () => {
+        clearTimeout(killTimer);
+        signal?.removeEventListener('abort', abortListener);
+      };
+      const finish = (exitCode, errorMessage = '') => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve({
+          ok: !cancelled && exitCode === 0,
+          stdout,
+          stderr: `${stderr}${errorMessage}`,
+          exitCode: exitCode ?? 1,
+          cancelled,
+        });
+      };
+      try {
+        child = spawn(process.execPath, cliArgs, {
+          cwd,
+          env: { ...process.env, GSD_RUNTIME: 'omp', GSD_AGENTS_DIR: agentsDir },
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (error) {
+        finish(1, error.message);
+        return;
+      }
       child.stdout.setEncoding('utf8');
       child.stderr.setEncoding('utf8');
-      child.stdout.on('data', (chunk) => { stdout += chunk; });
-      child.stderr.on('data', (chunk) => { stderr += chunk; });
-      child.on('error', (error) => {
-        signal?.removeEventListener('abort', abort);
-        resolve({ ok: false, stdout, stderr: `${stderr}${error.message}`, exitCode: 1, cancelled });
-      });
-      child.on('close', (code) => {
-        signal?.removeEventListener('abort', abort);
-        resolve({ ok: !cancelled && code === 0, stdout, stderr, exitCode: code ?? 1, cancelled });
-      });
+      child.stdout.on('data', (chunk) => { stdout = appendOutput(stdout, chunk); });
+      child.stderr.on('data', (chunk) => { stderr = appendOutput(stderr, chunk); });
+      child.on('error', (error) => finish(1, error.message));
+      child.on('close', (code) => finish(code ?? 1));
+      if (signal?.aborted) abortListener();
+      else signal?.addEventListener('abort', abortListener, { once: true });
     });
   }
 
   function readConfig(cwd) {
+    return readProjectConfig(cwd);
+  }
+
+  function isRegularFile(filePath) {
     try {
-      return JSON.parse(fs.readFileSync(path.join(cwd, '.planning', 'config.json'), 'utf8'));
+      return fs.statSync(filePath).isFile();
     } catch {
-      return null;
+      return false;
     }
   }
 
   function isGsdProject(cwd) {
-    const planningDir = path.join(cwd, '.planning');
-    return ['PROJECT.md', 'ROADMAP.md', 'STATE.md'].some((name) => fs.existsSync(path.join(planningDir, name)));
+    const active = resolvedPlanningPaths(cwd);
+    const flatRoot = path.join(cwd, '.planning');
+    return [active.project, active.roadmap, active.state, ...['PROJECT.md', 'ROADMAP.md', 'STATE.md'].map((name) => path.join(flatRoot, name))]
+      .some((filePath) => isRegularFile(filePath));
   }
 
   function nextActionPath(cwd) {
-    return path.join(cwd, '.planning', '.omp-next-action.json');
+    return planningFilePath(cwd, '.omp-next-action.json');
   }
 
   function normalizeNativeGsdCommand(command) {
@@ -707,7 +859,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   }
 
   function uiStatePath(cwd) {
-    return path.join(cwd, '.planning', '.omp-ui-state.json');
+    return planningFilePath(cwd, '.omp-ui-state.json');
   }
 
   function readUiState(cwd) {
@@ -795,7 +947,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
 
   function checkpointPath(cwd) {
-    return path.join(cwd, '.planning', '.omp-checkpoint.json');
+    return planningFilePath(cwd, '.omp-checkpoint.json');
   }
 
   function readCheckpoint(cwd) {
@@ -839,7 +991,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   }
 
   function taskResultsPath(cwd) {
-    return path.join(cwd, '.planning', '.omp-task-results.json');
+    return planningFilePath(cwd, '.omp-task-results.json');
   }
   function taskResultsLockOwnerPath(lockPath) {
     return path.join(lockPath, 'owner.json');
@@ -916,8 +1068,14 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       const results = JSON.parse(fs.readFileSync(taskResultsPath(cwd), 'utf8'));
       if (!Array.isArray(results)) return [];
       return results.flatMap((result) => {
-        const phase = normalizePhaseId(result?.phase);
-        return phase ? [{ ...result, phase }] : [];
+        if (!result || typeof result !== 'object' || Array.isArray(result)) return [];
+        const phase = normalizePhaseId(result.phase);
+        const plan = typeof result.plan === 'string' ? result.plan.trim() : '';
+        const task = typeof result.task === 'string' ? result.task.trim() : '';
+        const status = typeof result.status === 'string' ? result.status.toLowerCase() : '';
+        return phase && plan && task && ['completed', 'failed', 'cancelled'].includes(status)
+          ? [{ ...result, phase, plan, task, status }]
+          : [];
       });
     } catch {
       return [];
@@ -982,7 +1140,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   }
 
   function persistOnboarding(cwd, config, language, textMode) {
-    const configPath = path.join(cwd, '.planning', 'config.json');
+    const configPath = planningFilePath(cwd, 'config');
     const temporaryPath = `${configPath}.${process.pid}.tmp`;
     const nextConfig = { ...config, response_language: language };
     if (textMode !== undefined) nextConfig.workflow = { ...(config.workflow || {}), text_mode: textMode };
@@ -1028,8 +1186,9 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     }
 
     if (!persistOnboarding(ctx.cwd, config, language, textMode)) return false;
-    ctx.ui.notify?.(`GSD language set to ${language}`, 'info');
-    if (textMode !== undefined) ctx.ui.notify?.(textMode ? 'GSD interaction set to terminal text' : 'GSD interaction set to OMP interactive', 'info');
+    const chinese = language === 'Simplified Chinese';
+    ctx.ui.notify?.(chinese ? 'GSD 界面语言已设置为简体中文' : 'GSD language set to English', 'info');
+    if (textMode !== undefined) ctx.ui.notify?.(chinese ? (textMode ? 'GSD 交互方式已设置为终端文本' : 'GSD 交互方式已设置为 OMP 交互式') : (textMode ? 'GSD interaction set to terminal text' : 'GSD interaction set to OMP interactive'), 'info');
     return true;
   }
 
@@ -1047,10 +1206,13 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const config = readConfig(cwd);
     if (!config?.hooks?.workflow_guard) return null;
 
-    const statePath = path.join(cwd, '.planning', 'STATE.md');
-    const stateHead = fs.existsSync(statePath)
-      ? fs.readFileSync(statePath, 'utf8').split(/\r?\n/).slice(0, 20).join('\n')
-      : '';
+    const statePath = planningFilePath(cwd, 'state');
+    let stateHead = '';
+    try {
+      if (fs.statSync(statePath).isFile()) stateHead = fs.readFileSync(statePath, 'utf8').split(/\r?\n/).slice(0, 20).join('\n');
+    } catch {
+      // Session-start reminders are advisory and must not block the host.
+    }
     const lines = ['## Project State Reminder', ''];
     lines.push(stateHead
       ? 'STATE.md exists — check blockers and the current phase before acting.\n' + stateHead
@@ -1060,7 +1222,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   }
 
   function stateSnapshot(cwd) {
-    const statePath = path.join(cwd, '.planning', 'STATE.md');
+    const statePath = planningFilePath(cwd, 'state');
     if (!fs.existsSync(statePath)) return null;
 
     let state;
@@ -1072,14 +1234,44 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const match = state.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/);
     if (!match) return { unreadable: true };
     const [, frontmatter, body] = match;
-    const field = (name) => frontmatter.match(new RegExp(`^\\s*${name}:\\s*"?([^"\\r\\n]+)`, 'm'))?.[1]?.trim();
-    const riskHeadings = [...body.matchAll(/^##\s+(Blockers|Concerns|Blockers\/Concerns)\s*$/gmi)];
+    const cleanValue = (raw) => {
+      let value = String(raw ?? '').trim();
+      if (!((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"')))) {
+        value = value.replace(/\s+#.*$/, '').trim();
+      }
+      if ((value.startsWith("'") && value.endsWith("'")) || (value.startsWith('"') && value.endsWith('"'))) {
+        value = value.slice(1, -1);
+      }
+      return value || null;
+    };
+    const fields = new Map();
+    let section;
+    for (const line of frontmatter.split(/\r?\n/)) {
+      const nested = line.match(/^\s{2,}([A-Za-z0-9_-]+):\s*(.*?)\s*$/);
+      if (nested && section === 'progress') fields.set(`progress.${nested[1]}`, cleanValue(nested[2]));
+      const scalar = line.match(/^([A-Za-z0-9_-]+):\s*(.*?)\s*$/);
+      if (scalar) {
+        section = scalar[1];
+        fields.set(scalar[1], cleanValue(scalar[2]));
+      }
+    }
+    const field = (name) => fields.get(name) || null;
+    const progressField = (name) => fields.get(`progress.${name}`) || null;
+    const bodyValue = (name) => body.match(new RegExp(`^\\s*(?:\\*\\*)?${escapeRegExp(name)}(?:\\*\\*)?:\\s*(.+)$`, 'mi'))?.[1]?.trim() || null;
+    const phaseLine = bodyValue('Phase');
+    const phase = phaseLine?.match(/^(\d+(?:\.\d+)?)/)?.[1] || field('current_phase') || '—';
+    const phaseName = field('current_phase_name')
+      || phaseLine?.match(/\(([^)\r\n]+)\)\s*$/)?.[1]?.trim()
+      || bodyValue('Current focus');
+    const riskHeadings = [...body.matchAll(/^(#{2,6})\s+(Blockers|Concerns|Blockers\/Concerns)\s*$/gmi)];
+    const allHeadings = [...body.matchAll(/^(#{2,6})\s+.+$/gmi)];
     const risks = [];
-    for (const [index, heading] of riskHeadings.entries()) {
+    for (const heading of riskHeadings) {
+      const level = heading[1].length;
       const sectionStart = heading.index + heading[0].length;
-      const sectionEnd = riskHeadings[index + 1]?.index ?? body.length;
-      const section = body.slice(sectionStart, sectionEnd).split(/^##\s/m)[0];
-      const headingName = heading[1].toLowerCase();
+      const nextHeading = allHeadings.find((candidate) => candidate.index > heading.index && candidate[1].length <= level);
+      const section = body.slice(sectionStart, nextHeading?.index ?? body.length);
+      const headingName = heading[2].toLowerCase();
       for (const bullet of section.matchAll(/^\s*-\s+(.+)$/gm)) {
         const title = bullet[1].trim();
         const blocker = headingName === 'blockers' || /^(?:\[blocker\]|⛔)/i.test(title);
@@ -1088,17 +1280,16 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     }
     const blockers = risks.filter(({ severity }) => severity === 'blocker').length;
     const concerns = risks.length - blockers;
-
     return {
-      phase: field('current_phase') || '—',
-      phaseName: field('current_phase_name'),
-      status: field('status') || 'unknown',
-      totalPlans: field('total_plans'),
-      completedPlans: field('completed_plans'),
+      phase,
+      phaseName,
+      status: field('status') || bodyValue('Status') || 'unknown',
+      totalPlans: field('total_plans') || progressField('total_plans'),
+      completedPlans: field('completed_plans') || progressField('completed_plans'),
       blockers,
       concerns,
       risks,
-      nextStep: body.match(/^Status:\s*(.+)$/m)?.[1]?.trim(),
+      nextStep: body.match(/^\s*(?:Next(?: Step)?|Recommendation):\s*(.+)$/mi)?.[1]?.trim() || null,
     };
   }
 
@@ -1109,6 +1300,10 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   function localizedUsage(cwd, syntax) {
     return usesChinese(cwd) ? `用法：${String(syntax).replace(/^Usage:\s*/, '')}` : syntax;
+  }
+
+  function localizedMessage(cwd, english, chinese) {
+    return usesChinese(cwd) ? chinese : english;
   }
 
   function localizedStatus(status, cwd) {
@@ -1150,7 +1345,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function phaseArtifactInventory(cwd, phaseValue) {
     const phase = normalizePhaseId(phaseValue);
     if (!phase) return null;
-    const phasesPath = path.join(cwd, '.planning', 'phases');
+    const phasesPath = resolvedPlanningPaths(cwd).phases;
     try {
       const phaseDirectory = fs.readdirSync(phasesPath, { withFileTypes: true })
         .find((entry) => entry.isDirectory() && entry.name.startsWith(`${phase}-`));
@@ -1184,13 +1379,15 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   }
 
   function nativeTaskRecovery(cwd) {
+    if (!isGsdProject(cwd)) return null;
     const currentPhase = normalizePhaseId(stateSnapshot(cwd)?.phase);
+    if (!currentPhase) return null;
     const completedPlanIds = phaseArtifactInventory(cwd, currentPhase)?.completedIds;
     const failures = readTaskResults(cwd).filter((entry) => {
       const phase = normalizePhaseId(entry?.phase);
       const planId = taskResultPlanArtifactId(phase, entry?.plan);
       return phase &&
-        (currentPhase === null || phase === currentPhase) &&
+        (phase === currentPhase) &&
         typeof entry.plan === 'string' && entry.plan &&
         typeof entry.task === 'string' && entry.task &&
         ['failed', 'cancelled'].includes(entry.status) &&
@@ -1234,7 +1431,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function discussablePhaseOptions(cwd) {
     let roadmap;
     try {
-      roadmap = fs.readFileSync(path.join(cwd, '.planning', 'ROADMAP.md'), 'utf8');
+      roadmap = fs.readFileSync(planningFilePath(cwd, 'roadmap'), 'utf8');
     } catch {
       return [];
     }
@@ -1246,20 +1443,24 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       }));
   }
 
-  function phaseArgumentCompletions(argumentPrefix, optionsForCwd) {
+  function phaseArgumentCompletions(argumentPrefix, optionsForCwd, cwd = process.cwd()) {
     const input = String(argumentPrefix || '');
     if (/\s$/.test(input) || /\s/.test(input.trim())) return null;
     const prefix = input.trim().toLowerCase();
-    const completions = optionsForCwd(process.cwd())
+    const completions = optionsForCwd(cwd)
       .filter(({ phase, label }) => !prefix || phase.startsWith(prefix) || label.toLowerCase().startsWith(prefix))
       .map(({ phase, label, description }) => ({ label, value: phase, description }));
     return completions.length ? completions : null;
   }
 
+  function phaseCompletions(optionsForCwd) {
+    return (input, context) => phaseArgumentCompletions(input, optionsForCwd, context?.cwd || process.cwd());
+  }
+
   function executablePhaseOptions(cwd) {
     let roadmap;
     try {
-      roadmap = fs.readFileSync(path.join(cwd, '.planning', 'ROADMAP.md'), 'utf8');
+      roadmap = fs.readFileSync(planningFilePath(cwd, 'roadmap'), 'utf8');
     } catch {
       return [];
     }
@@ -1280,7 +1481,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function phasePlanningStatus(cwd, phaseValue) {
     const phase = normalizePhaseId(phaseValue);
     if (!phase) return { context: false, research: false, plans: 0 };
-    const phasesPath = path.join(cwd, '.planning', 'phases');
+    const phasesPath = resolvedPlanningPaths(cwd).phases;
     try {
       const phaseDirectory = fs.readdirSync(phasesPath, { withFileTypes: true })
         .find((entry) => entry.isDirectory() && entry.name.startsWith(`${phase}-`));
@@ -1300,7 +1501,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function plannablePhaseOptions(cwd) {
     let roadmap;
     try {
-      roadmap = fs.readFileSync(path.join(cwd, '.planning', 'ROADMAP.md'), 'utf8');
+      roadmap = fs.readFileSync(planningFilePath(cwd, 'roadmap'), 'utf8');
     } catch {
       return [];
     }
@@ -1321,7 +1522,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function phaseVerificationStatus(cwd, phaseValue) {
     const phase = normalizePhaseId(phaseValue);
     if (!phase) return 'pending';
-    const phasesPath = path.join(cwd, '.planning', 'phases');
+    const phasesPath = resolvedPlanningPaths(cwd).phases;
     try {
       const phaseDirectory = fs.readdirSync(phasesPath, { withFileTypes: true })
         .find((entry) => entry.isDirectory() && entry.name.startsWith(`${phase}-`));
@@ -1338,7 +1539,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   function verifiablePhaseOptions(cwd) {
     let roadmap;
     try {
-      roadmap = fs.readFileSync(path.join(cwd, '.planning', 'ROADMAP.md'), 'utf8');
+      roadmap = fs.readFileSync(planningFilePath(cwd, 'roadmap'), 'utf8');
     } catch {
       return [];
     }
@@ -1378,6 +1579,8 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     return chinese ? `${scope} ${counts} 已完成` : `${scope} ${counts} complete`;
   }
 
+  const WIDGET_COLORS = Object.freeze({ danger: 31, warning: 33, accent: 36, muted: 2 });
+
   function widgetLines(cwd) {
     const chinese = usesChinese(cwd);
     const activeTaskCount = nativeTaskActivityCount(cwd);
@@ -1388,26 +1591,26 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (!state && !activeTaskCount && !action && !recovery && !checkpoint) return [];
     const recoveryCount = recovery?.failures.length || 0;
     const recoveryRow = recoveryCount
-      ? widgetColor(31, chinese ? `⛔ ${recoveryCount} 个原生任务待恢复` : `⛔ Native task recovery: ${recoveryCount} failed`)
+      ? widgetColor(WIDGET_COLORS.danger, chinese ? `⛔ ${recoveryCount} 个原生任务待恢复` : `⛔ Native task recovery: ${recoveryCount} failed`)
       : null;
     const checkpointRow = checkpoint
-      ? widgetColor(33, chinese ? `↻ 恢复阶段 ${checkpoint.phase}：${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划已完成` : `↻ Resume Phase ${checkpoint.phase}: ${checkpoint.plansDone}/${checkpoint.plansTotal} plans complete`)
+      ? widgetColor(WIDGET_COLORS.warning, chinese ? `↻ 恢复阶段 ${checkpoint.phase}：${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划已完成` : `↻ Resume Phase ${checkpoint.phase}: ${checkpoint.plansDone}/${checkpoint.plansTotal} plans complete`)
       : null;
     if (state?.unreadable) {
       const rows = [recoveryRow].filter(Boolean);
-      const lines = [widgetColor(31, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
-      if (recoveryRow) lines.push(`   ${widgetColor(2, recovery.command)}`);
+      const lines = [widgetColor(WIDGET_COLORS.danger, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
+      if (recoveryRow) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, recovery.command)}`);
       return lines;
     }
     const hasRisks = Boolean(state?.blockers || state?.concerns);
     if (!hasRisks && !action && !recovery && !checkpoint) return [];
     const heading = recovery
-      ? widgetColor(31, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
+      ? widgetColor(WIDGET_COLORS.danger, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
       : action
-        ? widgetColor(36, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
+        ? widgetColor(WIDGET_COLORS.accent, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
         : checkpoint
-          ? widgetColor(33, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
-          : widgetColor(33, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
+          ? widgetColor(WIDGET_COLORS.warning, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
+          : widgetColor(WIDGET_COLORS.warning, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
     const rows = [];
     if (hasRisks) rows.push(widgetRiskLine(state, chinese));
     if (recoveryRow) rows.push(recoveryRow);
@@ -1415,7 +1618,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     if (action) rows.push(action.label.slice(0, 92));
     const lines = [heading, ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
     const command = recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
-    if (command) lines.push(`   ${widgetColor(2, command)}`);
+    if (command) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, command)}`);
     return lines;
   }
 
@@ -1466,8 +1669,8 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   function widgetRiskLine(state, chinese) {
     const parts = [];
-    if (state.blockers) parts.push(widgetColor(31, chinese ? `⛔ ${state.blockers} 阻塞` : `⛔ ${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`));
-    if (state.concerns) parts.push(widgetColor(33, chinese ? `⚠ ${state.concerns} 关注` : `⚠ ${state.concerns} concern${state.concerns === 1 ? '' : 's'}`));
+    if (state.blockers) parts.push(widgetColor(WIDGET_COLORS.danger, chinese ? `⛔ ${state.blockers} 阻塞` : `⛔ ${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`));
+    if (state.concerns) parts.push(widgetColor(WIDGET_COLORS.warning, chinese ? `⚠ ${state.concerns} 关注` : `⚠ ${state.concerns} concern${state.concerns === 1 ? '' : 's'}`));
     return parts.join(' · ');
   }
 
@@ -1653,6 +1856,8 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
         });
       },
     });
+    clearNextAction(ctx.cwd);
+    updateStatus(ctx);
   }
 
   function compactNextLabel(next, chinese) {
@@ -1669,6 +1874,8 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
       return;
     }
     await pi.sendMessage({ customType: 'gsd-native-continuation', content: prompt, display: true }, { triggerTurn: true });
+    clearNextAction(ctx.cwd);
+    updateStatus(ctx);
   }
 
   function continuationPreview(action, chinese) {
@@ -2116,7 +2323,7 @@ OMP test-generation contract:
   function completedPhaseOptions(cwd) {
     let roadmap;
     try {
-      roadmap = fs.readFileSync(path.join(cwd, '.planning', 'ROADMAP.md'), 'utf8');
+      roadmap = fs.readFileSync(planningFilePath(cwd, 'roadmap'), 'utf8');
     } catch {
       return [];
     }
@@ -2164,7 +2371,7 @@ OMP validation contract:
   async function launchDetectedNativeValidation(ctx, options = []) {
     const phase = completedPhaseOptions(ctx.cwd).at(-1)?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-validation-no-completed-phase', content: 'No completed phase is available for Nyquist validation. Complete phase execution first.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-validation-no-completed-phase', content: localizedMessage(ctx.cwd, 'No completed phase is available for Nyquist validation. Complete phase execution first.', '没有可用于 Nyquist 验证的已完成阶段。请先完成阶段执行。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeValidation(ctx, [phase, ...options].join(' '));
@@ -2200,7 +2407,7 @@ OMP security contract:
   async function launchDetectedNativeSecurity(ctx, options = []) {
     const phase = completedPhaseOptions(ctx.cwd).at(-1)?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-security-no-completed-phase', content: 'No completed phase is available for security verification. Complete phase execution first.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-security-no-completed-phase', content: localizedMessage(ctx.cwd, 'No completed phase is available for security verification. Complete phase execution first.', '没有可用于安全验证的已完成阶段。请先完成阶段执行。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeSecurity(ctx, [phase, ...options].join(' '));
@@ -2299,7 +2506,7 @@ OMP UI-review contract:
   async function launchDetectedNativeUiReview(ctx, options = []) {
     const phase = completedPhaseOptions(ctx.cwd).at(-1)?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-ui-review-no-completed-phase', content: 'No completed phase is available for a UI review. Complete phase execution first.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-ui-review-no-completed-phase', content: localizedMessage(ctx.cwd, 'No completed phase is available for a UI review. Complete phase execution first.', '没有可用于 UI 审查的已完成阶段。请先完成阶段执行。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeUiReview(ctx, [phase, ...options].join(' '));
@@ -2530,7 +2737,7 @@ OMP evaluation-review contract:
   async function launchDetectedNativeEvalReview(ctx, options = []) {
     const phase = completedPhaseOptions(ctx.cwd).at(-1)?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-eval-review-no-completed-phase', content: 'No completed phase is available for an evaluation review. Complete phase execution first.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-eval-review-no-completed-phase', content: localizedMessage(ctx.cwd, 'No completed phase is available for an evaluation review. Complete phase execution first.', '没有可用于评估审查的已完成阶段。请先完成阶段执行。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeEvalReview(ctx, [phase, ...options].join(' '));
@@ -2567,7 +2774,7 @@ OMP AI-integration contract:
   async function launchDetectedNativeAiIntegration(ctx, options = []) {
     const phase = plannablePhaseOptions(ctx.cwd)[0]?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-ai-integration-no-runnable-phase', content: 'No unplanned roadmap phase is available for an AI design contract. Use /gsd-status to review the project state.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-ai-integration-no-runnable-phase', content: localizedMessage(ctx.cwd, 'No unplanned roadmap phase is available for an AI design contract. Use /gsd-status to review the project state.', '没有可用于 AI 设计契约的未规划路线图阶段。请使用 /gsd-status 查看项目状态。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeAiIntegration(ctx, [phase, ...options].join(' '));
@@ -2790,7 +2997,7 @@ OMP UI contract:
   async function launchDetectedNativeUiPhase(ctx, options = []) {
     const phase = plannablePhaseOptions(ctx.cwd)[0]?.phase;
     if (!phase) {
-      await pi.sendMessage({ customType: 'gsd-ui-no-runnable-phase', content: 'No unplanned roadmap phase is available for a UI design contract. Use /gsd-status to review the project state.', display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: 'gsd-ui-no-runnable-phase', content: localizedMessage(ctx.cwd, 'No unplanned roadmap phase is available for a UI design contract. Use /gsd-status to review the project state.', '没有可用于 UI 设计契约的未规划路线图阶段。请使用 /gsd-status 查看项目状态。'), display: true }, { triggerTurn: false });
       return;
     }
     await launchNativeUiPhase(ctx, [phase, ...options].join(' '));
@@ -3112,7 +3319,7 @@ OMP interaction contract:
         resume: 'Usage: /gsd-resume-work',
         ship: 'Usage: /gsd-ship [phase number or milestone]',
       }[activity];
-      await pi.sendMessage({ customType: `gsd-${commandName}-input-error`, content: usage, display: true }, { triggerTurn: false });
+      await pi.sendMessage({ customType: `gsd-${commandName}-input-error`, content: localizedUsage(ctx.cwd, usage), display: true }, { triggerTurn: false });
       return;
     }
     await nameNativeLifecycleSession(ctx, activity);
@@ -3340,7 +3547,7 @@ OMP PR-branch contract:
   const dedicatedNativeSkillCommands = new Set(['gsd-update', 'gsd-undo', 'gsd-pr-branch']);
 
   function registerProjectedSkillCommands() {
-    const skillsRoot = path.join(path.resolve(options.runtimeRoot || path.resolve(__dirname, '..')), 'skills');
+    const skillsRoot = path.join(runtimeRoot, 'skills');
     let entries;
     try {
       entries = fs.readdirSync(skillsRoot, { withFileTypes: true });
@@ -3425,7 +3632,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-execute-phase', {
     description: 'Choose and execute a GSD phase through OMP native task waves.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, executablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(executablePhaseOptions),
     handler: async (input, ctx) => {
       if (!String(input || '').trim()) return chooseExecutionPhase(ctx);
       return launchNativePhaseExecution(ctx, input);
@@ -3439,13 +3646,13 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-add-tests', {
     description: 'Generate phase tests through native OMP approvals.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, completedPhaseOptions),
+    getArgumentCompletions: phaseCompletions(completedPhaseOptions),
     handler: async (input, ctx) => launchNativeAddTests(ctx, input),
   });
 
   pi.registerCommand('gsd-validate-phase', {
     description: 'Audit Nyquist validation through native OMP controls.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, completedPhaseOptions),
+    getArgumentCompletions: phaseCompletions(completedPhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => token === '--text')) return launchDetectedNativeValidation(ctx, tokens);
@@ -3455,7 +3662,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-secure-phase', {
     description: 'Verify phase threat mitigations through native OMP controls.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, completedPhaseOptions),
+    getArgumentCompletions: phaseCompletions(completedPhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => token === '--text')) return launchDetectedNativeSecurity(ctx, tokens);
@@ -3475,7 +3682,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-ui-review', {
     description: 'Audit a completed phase UI through native OMP task dispatch.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, completedPhaseOptions),
+    getArgumentCompletions: phaseCompletions(completedPhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => token === '--text')) return launchDetectedNativeUiReview(ctx, tokens);
@@ -3505,13 +3712,13 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-mvp-phase', {
     description: 'Plan a vertical MVP phase through native OMP questions.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, plannablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(plannablePhaseOptions),
     handler: async (input, ctx) => launchNativeMvpPhase(ctx, input),
   });
 
   pi.registerCommand('gsd-eval-review', {
     description: 'Audit completed AI phase evaluation coverage through native OMP tasks.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, completedPhaseOptions),
+    getArgumentCompletions: phaseCompletions(completedPhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => token === '--text')) return launchDetectedNativeEvalReview(ctx, tokens);
@@ -3521,7 +3728,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-ai-integration-phase', {
     description: 'Create an AI design contract through native OMP tasks.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, plannablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(plannablePhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => token === '--text')) return launchDetectedNativeAiIntegration(ctx, tokens);
@@ -3561,13 +3768,13 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-spec-phase', {
     description: 'Clarify a GSD phase through native OMP specification questions.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, discussablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(discussablePhaseOptions),
     handler: async (input, ctx) => launchNativePhaseSpecification(ctx, input),
   });
 
   pi.registerCommand('gsd-ui-phase', {
     description: 'Create a GSD UI design contract through native OMP controls.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, plannablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(plannablePhaseOptions),
     handler: async (input, ctx) => {
       const tokens = parseCommandLine(input);
       if (!tokens.length || tokens.every((token) => ['--auto', '--text'].includes(token))) return launchDetectedNativeUiPhase(ctx, tokens);
@@ -3577,7 +3784,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-discuss-phase', {
     description: 'Discuss a GSD phase with native OMP question controls.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, discussablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(discussablePhaseOptions),
     handler: async (input, ctx) => {
       if (!String(input || '').trim()) return chooseDiscussionPhase(ctx);
       return launchNativePhaseDiscussion(ctx, input);
@@ -3586,7 +3793,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-plan-phase', {
     description: 'Choose and plan a GSD phase with native OMP preflight.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, plannablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(plannablePhaseOptions),
     handler: async (input, ctx) => {
       if (!String(input || '').trim()) return choosePlanningPhase(ctx);
       return launchNativePhasePlanning(ctx, input);
@@ -3595,7 +3802,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
 
   pi.registerCommand('gsd-verify-work', {
     description: 'Choose and verify a completed GSD phase through native UAT.',
-    getArgumentCompletions: (input) => phaseArgumentCompletions(input, verifiablePhaseOptions),
+    getArgumentCompletions: phaseCompletions(verifiablePhaseOptions),
     handler: async (input, ctx) => {
       if (!String(input || '').trim()) return chooseVerificationPhase(ctx);
       return launchNativePhaseVerification(ctx, input);
@@ -3664,6 +3871,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     name: 'gsd_invoke',
     label: 'GSD Invoke',
     description: 'Invoke a gsd-tools top-level family (for example, family "progress"), not a slash workflow. Never use "gsd" as the family.',
+    loadMode: 'discoverable',
     parameters: z.object({
       family: z.string().default('query'),
       subcommand: z.string().default('help'),
@@ -3751,8 +3959,8 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     releaseFailedGsdTaskRequest(event, ctx.cwd);
     trackGsdTaskProgress(event, ctx.cwd);
     reconcileTaskSettlement(event, ctx.cwd);
-    const output = (event.content || [])
-      .filter((chunk) => chunk.type === 'text')
+    const output = (Array.isArray(event?.content) ? event.content : [])
+      .filter((chunk) => chunk?.type === 'text' && typeof chunk.text === 'string')
       .map((chunk) => chunk.text)
       .join('\n');
     const checkpoint = extractCheckpoint(output);

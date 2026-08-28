@@ -46,7 +46,7 @@ function initialize() {
   if (profile !== 'programmatic-cli') {
     throw new Error(t('eos.error.unexpectedProfile', { profile: JSON.stringify(profile) }));
   }
-  if (negotiation.protocolVersion < 1) {
+  if (!Number.isInteger(negotiation.protocolVersion) || negotiation.protocolVersion !== 1) {
     throw new Error(t('eos.error.unsupportedProtocol', { version: JSON.stringify(negotiation.protocolVersion) }));
   }
 
