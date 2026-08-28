@@ -148,7 +148,7 @@ try {
       .filter((command) => command.source === 'extension')
       .map((command) => [command.name, command]),
   );
-  for (const command of ['gsd', 'gsd-next', 'gsd-plan-phase', 'gsd-status']) {
+  for (const command of ['gsd', 'gsd-next', 'gsd-plan-phase', 'gsd-status', 'omp-native']) {
     assert.ok(extensionCommands.has(command), `OMP did not load extension command /${command}`);
   }
 

@@ -6,7 +6,8 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
-const { doctor, install, uninstall, update, parseArgs } = require('../bin/gsd-omp.cjs');
+const { doctor, install, uninstall, update, parseArgs, compareVersions } = require('../bin/gsd-omp.cjs');
+
 // Pin locale to English so the ownership-error regex stays deterministic
 // regardless of the dev shell's LANG.
 require('../src/locale.cjs').setLocale('en');
@@ -47,6 +48,19 @@ function sha256(value) {
     fs.rmSync(root, { recursive: true, force: true });
   }
 });
+test('removes the stale legacy CJS extension during reinstall', () => {
+  const root = temporaryRoot('gsd-omp-legacy-extension');
+  const legacyPath = path.join(root, 'extensions', 'gsd-omp.cjs');
+  try {
+    install({ root });
+    fs.writeFileSync(legacyPath, '// GSD extension for Pi-compatible hosts\n');
+    install({ root });
+    assert.equal(fs.existsSync(legacyPath), false);
+    assert.equal(fs.existsSync(path.join(root, 'extensions', 'gsd-omp.ts')), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
  test('refuses to overwrite or remove a modified managed file', () => {
   const root = temporaryRoot('gsd-omp-ownership');
@@ -74,6 +88,11 @@ function sha256(value) {
   });
   assert.equal(result.upToDate, true);
   assert.equal(result.current, packageJson.version);
+});
+test('compares semantic release versions numerically', () => {
+  assert.equal(compareVersions('1.0.15', '1.0.12') > 0, true);
+  assert.equal(compareVersions('1.0.12', '1.0.15') < 0, true);
+  assert.equal(compareVersions('1.0.15', '1.0.15'), 0);
 });
 
 test('rejects a missing --root value instead of consuming another option', () => {

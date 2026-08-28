@@ -55,7 +55,8 @@ gsd-omp install
 
 ## 命令
 
-插件注册了 39 个斜杠命令与 `gsd_invoke` 工具。下表按项目生命周期分组,描述取自命令注册元数据。
+插件注册了 40 个斜杠命令与 `gsd_invoke` 工具。下表按项目生命周期分组,描述取自命令注册元数据。
+
 
 ### 入口与状态
 
@@ -64,6 +65,7 @@ gsd-omp install
 | `/gsd-next` | 显示或准备下一个本地化的 GSD 动作 |
 | `/gsd-progress` | 显示 GSD 进度,或在门控的下一步工作流中推进 |
 | `/gsd-status` | 显示本地化的 GSD 项目摘要 |
+| `/omp-native` | 显示 OMP 原生任务执行状态与入口 |
 | `/gsd <family> <subcommand> [args]` | 直接调用公共 `gsd-tools` CLI |
 
 ### 项目生命周期
