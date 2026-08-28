@@ -54,7 +54,7 @@ The plugin also registers the `gsd_invoke` tool for structured access to the pub
 
 ## Commands
 
-The plugin registers 38 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
+The plugin registers 39 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
 
 ### Entry & status
 

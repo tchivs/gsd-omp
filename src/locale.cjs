@@ -51,8 +51,9 @@ function getLocale() {
 }
 
 function t(key, params) {
-  let template = load(current)[key];
-  if (template === undefined) template = load(DEFAULT_LOCALE)[key];
+  const read = (dictionary) => Object.hasOwn(dictionary, key) ? dictionary[key] : undefined;
+  let template = read(load(current));
+  if (template === undefined) template = read(load(DEFAULT_LOCALE));
   if (template === undefined) return key;
   if (!params) return template;
   return String(template).replace(/\{(\w+)\}/g, (_, name) => (

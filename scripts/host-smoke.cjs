@@ -116,6 +116,10 @@ try {
       '--no-session',
       '--model', model.selector,
       '--cwd', repositoryRoot,
+      // OMP keeps extension tools out of the default active set. Request the
+      // structured bridge explicitly; hosts with xdev support may still mount
+      // it, while older hosts expose it as a normal top-level tool.
+      '--tools', 'read,write,gsd_invoke',
     ],
     { input: `${JSON.stringify({ id: stateRequestId, type: 'get_state' })}\n` },
   );
@@ -139,14 +143,22 @@ try {
   const systemPrompt = Array.isArray(stateResponse.data?.systemPrompt)
     ? stateResponse.data.systemPrompt.join('\n')
     : String(stateResponse.data?.systemPrompt || '');
-  assert.match(systemPrompt, /xd:\/\/gsd_invoke\b/, 'OMP did not mount the gsd_invoke xdev tool');
+  const activeTools = new Set(
+    Array.isArray(stateResponse.data?.dumpTools)
+      ? stateResponse.data.dumpTools.map((tool) => tool?.name).filter((name) => typeof name === 'string')
+      : [],
+  );
+  assert.ok(
+    activeTools.has('gsd_invoke') || /xd:\/\/gsd_invoke\b/.test(systemPrompt),
+    'OMP did not expose the gsd_invoke tool as top-level or xdev',
+  );
 
   const uninstall = parseJson(runPlugin(['uninstall', '--root', runtimeRoot, '--json']), 'gsd-omp uninstall');
   assert.equal(uninstall.removed, install.installed);
   assert.deepEqual(uninstall.skipped, []);
 
   process.stdout.write(
-    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands and xd://gsd_invoke\n`,
+    `ok host-smoke: OMP ${process.env.OMP_VERSION || 'local'} loaded ${extensionCommands.size} GSD extension commands and gsd_invoke\n`,
   );
 } finally {
   fs.rmSync(runtimeRoot, { recursive: true, force: true });

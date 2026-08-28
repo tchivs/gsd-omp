@@ -76,6 +76,12 @@ test('t returns the key itself when unrecognized', () => {
   assert.equal(locale.t('does.not.exist'), 'does.not.exist');
 });
 
+test('t treats inherited object keys as unknown messages', () => {
+  locale.setLocale('en');
+  assert.equal(locale.t('constructor'), 'constructor');
+  assert.equal(locale.t('__proto__'), '__proto__');
+});
+
 test('every English key has a Simplified-Chinese counterpart (parity)', () => {
   const enKeys = Object.keys(en).sort();
   const zhKeys = Object.keys(zhCN).sort();

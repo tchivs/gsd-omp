@@ -50,8 +50,9 @@ function mockPi() {
     assert.equal(pi.commands.has('gsd'), true);
     assert.equal(pi.commands.has('gsd-next'), true);
     assert.equal(pi.commands.has('gsd-plan-phase'), true);
-    assert.equal(pi.commands.size > 25, true);
+    assert.equal(pi.commands.size >= 39, true);
     assert.equal(pi.tools.has('gsd_invoke'), true);
+    assert.equal(pi.tools.get('gsd_invoke').loadMode, 'discoverable');
     assert.equal(pi.events.has('session_start'), true);
     assert.equal(pi.events.has('tool_call'), true);
     assert.equal(pi.events.has('tool_result'), true);
@@ -118,6 +119,60 @@ test('uses OMP-managed timers for gsd_invoke progress updates', async () => {
     assert.equal(cleared, timer);
     assert.equal(updates, 1);
     assert.equal(Array.isArray(result.content), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('phase argument completion reads the active command context cwd', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-completion-cwd-'));
+  try {
+    fs.mkdirSync(path.join(root, '.planning'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.planning', 'ROADMAP.md'),
+      '- [ ] **Phase 7: Context-aware phase**\n',
+    );
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const completions = pi.commands.get('gsd-discuss-phase').getArgumentCompletions('', { cwd: root });
+    assert.deepEqual(completions?.map(({ value }) => value), ['07']);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gsd_invoke resolves promptly when its abort signal is already set', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-abort-'));
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const controller = new AbortController();
+    controller.abort();
+    const result = await pi.tools.get('gsd_invoke').execute(
+      'abort-call',
+      { family: 'query', subcommand: 'help', args: [] },
+      controller.signal,
+      null,
+      { cwd: root },
+    );
+    assert.equal(result.details.cancelled, true);
+    assert.equal(result.content[0].text, 'GSD command cancelled.');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('gsd slash command routes empty input to the GSD CLI help surface', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-gsd-help-'));
+  try {
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd').handler('', { cwd: root });
+    assert.equal(sent.length, 1);
+    assert.equal(sent[0].details.ok, true);
+    assert.match(sent[0].details.stdout, /Usage: gsd-tools/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -258,6 +313,239 @@ test('gsd-next does not advance while a native GSD task is still running', async
     assert.equal(sent.length, 1, 'gsd-next emitted exactly one message');
     assert.equal(sent[0].customType, 'gsd-native-tasks-active',
       'gsd-next reports active tasks instead of dispatching the saved continuation');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ignores malformed task requests without a call id', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.events.get('tool_call')({
+      toolName: 'task',
+      input: { tasks: [{ name: 'Phase1Plan07Executor', agent: 'gsd-executor', task: 'do work' }] },
+    }, { cwd: root });
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps queued native jobs active and tolerates non-array tool content', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    await pi.events.get('tool_call')(taskSpawnCall('call_queue', ['Phase1Plan08Executor']), ctx);
+    await pi.events.get('tool_result')({
+      toolName: 'job',
+      details: { jobs: [{ id: 'Phase1Plan08Executor', status: 'queued' }] },
+      content: 'not-an-array',
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 1);
+    await pi.events.get('tool_result')({
+      toolName: 'job',
+      details: { jobs: [{ id: 'Phase1Plan08Executor', status: 'completed' }] },
+      content: [],
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status reads the active workstream planning paths', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-workstream-'));
+  const workstreamPath = path.join(root, '.planning', 'workstreams', 'demo');
+  const priorWorkstream = process.env.GSD_WORKSTREAM;
+  try {
+    fs.mkdirSync(workstreamPath, { recursive: true });
+    fs.writeFileSync(path.join(workstreamPath, 'PROJECT.md'), '# Demo\n');
+    fs.writeFileSync(path.join(workstreamPath, 'ROADMAP.md'), '- [ ] **Phase 2: Workstream phase**\n');
+    fs.writeFileSync(
+      path.join(workstreamPath, 'STATE.md'),
+      '---\ncurrent_phase: 2\nstatus: executing\ntotal_plans: 1\ncompleted_plans: 0\n---\nStatus: executing\n',
+    );
+    fs.writeFileSync(path.join(workstreamPath, 'config.json'), '{}\n');
+    process.env.GSD_WORKSTREAM = 'demo';
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd-status').handler('', { cwd: root });
+    assert.match(sent[0].content, /Phase: 2/);
+  } finally {
+    if (priorWorkstream === undefined) delete process.env.GSD_WORKSTREAM;
+    else process.env.GSD_WORKSTREAM = priorWorkstream;
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('status summary reads nested progress and level-three risks', async () => {
+  const root = gsdProjectRoot();
+  try {
+    fs.writeFileSync(
+      path.join(root, '.planning', 'STATE.md'),
+      [
+        '---',
+        'status: planning',
+        'progress:',
+        '  total_plans: 4',
+        '  completed_plans: 2',
+        '  percent: 50',
+        '---',
+        '',
+        '# Project State',
+        '',
+        '## Current Position',
+        '',
+        'Phase: 2 of 3 (Build)',
+        'Status: In progress',
+        '',
+        '### Blockers/Concerns',
+        '',
+        '- [blocker] API is unavailable',
+        '- Waiting for a dependency',
+        '',
+        '## Deferred Items',
+        '',
+        'None.',
+        '',
+      ].join('\n'),
+    );
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd-status').handler('', { cwd: root });
+    assert.match(sent[0].content, /Plans: Plans 2 \/ 4 complete/);
+    assert.match(sent[0].content, /1 blocker/);
+    assert.match(sent[0].content, /1 concern/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('clears a pending continuation after dispatch succeeds', async () => {
+  const root = gsdProjectRoot();
+  const actionPath = path.join(root, '.planning', '.omp-next-action.json');
+  try {
+    fs.writeFileSync(actionPath, JSON.stringify({ command: '/gsd-status', label: 'Show status' }));
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: { select: async (_title, choices) => choices[0].label },
+    };
+    await pi.commands.get('gsd-next').handler('', ctx);
+    assert.equal(sent[0].customType, 'gsd-native-continuation');
+    assert.equal(fs.existsSync(actionPath), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('uses localized copy for detected empty-state and invalid lifecycle input', async () => {
+  const root = gsdProjectRoot();
+  try {
+    fs.writeFileSync(path.join(root, '.planning', 'config.json'), JSON.stringify({ response_language: 'Simplified Chinese' }));
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd-validate-phase').handler('--text', { cwd: root });
+    await pi.commands.get('gsd-new-project').handler('--invalid', { cwd: root });
+    assert.match(sent[0].content, /没有可用于 Nyquist 验证/);
+    assert.match(sent[1].content, /^用法：/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('blocks phase writes through symlinked planning paths and empty LSP edits', async () => {
+  const root = gsdProjectRoot();
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-guard-outside-'));
+  try {
+    fs.symlinkSync(outside, path.join(root, '.planning', 'linked'), 'dir');
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    await pi.commands.get('gsd-execute-phase').handler('1', ctx);
+    const symlinkResult = await pi.events.get('tool_call')({
+      toolName: 'write',
+      input: { path: '.planning/linked/STATE.md' },
+    }, ctx);
+    assert.equal(symlinkResult.block, true);
+    const emptyLspResult = await pi.events.get('tool_call')({
+      toolName: 'lsp',
+      input: { action: 'code_actions', apply: true },
+    }, ctx);
+    assert.equal(emptyLspResult.block, true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+    fs.rmSync(outside, { recursive: true, force: true });
+  }
+});
+
+test('keeps a duplicate task name active until every owner settles', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    const task = 'Phase1Plan09Executor';
+    await pi.events.get('tool_call')(taskSpawnCall('call_a', [task]), ctx);
+    await pi.events.get('tool_call')(taskSpawnCall('call_b', [task]), ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 1);
+    const result = (callId) => ({
+      toolName: 'task', toolCallId: callId, isError: false, content: [],
+      details: { results: [{ id: task, agent: 'gsd-executor', exitCode: 0, output: '' }] },
+    });
+    await pi.events.get('tool_result')(result('call_a'), ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 1);
+    await pi.events.get('tool_result')(result('call_b'), ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('does not route stale task results from a non-project directory', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-stale-recovery-'));
+  try {
+    fs.mkdirSync(path.join(root, '.planning'), { recursive: true });
+    fs.writeFileSync(
+      path.join(root, '.planning', '.omp-task-results.json'),
+      JSON.stringify([{ phase: '01', plan: '01-01', task: 'Phase1Plan01Executor', status: 'failed' }]),
+    );
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd-next').handler('', { cwd: root });
+    assert.equal(sent[0].customType, 'gsd-start-project');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('ignores non-GSD entries in native task progress snapshots', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.events.get('tool_result')({
+      toolName: 'task',
+      details: { progress: [{ id: 'foreign-task', agent: 'worker', status: 'running' }] },
+      content: [],
+    }, { cwd: root });
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

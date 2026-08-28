@@ -6,8 +6,8 @@ const Eos = require('../src/eos.cjs');
 
  test('negotiates OMP as a protocol-v1 programmatic CLI', () => {
   const binding = Eos.initialize();
-  assert.equal(binding.SDK.PROTOCOL_VERSION >= 1, true);
-  assert.equal(binding.negotiation.protocolVersion, binding.SDK.PROTOCOL_VERSION);
+  assert.equal(binding.SDK.PROTOCOL_VERSION, 1);
+  assert.equal(binding.negotiation.protocolVersion, 1);
   assert.equal(binding.profile, 'programmatic-cli');
   assert.equal(binding.adapter.kind, 'imperative');
   assert.equal(binding.adapter.runtime, 'omp');
