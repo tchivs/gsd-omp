@@ -12,7 +12,7 @@
 
 **English** · [简体中文](./README.zh-CN.md)
 
-`gsd-omp` is an independently maintained Oh My Pi host plugin for the [GSD Embeddable Orchestration System](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md). It binds OMP's native extension, command, event, task, and filesystem surfaces to GSD through protocol version 1 of the public Host-Integration SDK.
+`gsd-omp` is an independently maintained Oh My Pi host plugin for the [GSD Embeddable Orchestration System](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md). It binds OMP's native extension, command, event, task, and filesystem surfaces to GSD through protocol version 1 of the public Host-Integration SDK. On hosts that expose Goal Mode, it mirrors optional goal state in the GSD status surfaces without taking ownership of OMP's GoalRuntime.
 
 This project is third-party software. It is not endorsed, reviewed, or maintained by OpenGSD.
 

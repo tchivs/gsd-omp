@@ -1,7 +1,7 @@
 {
   "name": "gsd-omp",
   "version": "1.0.21",
-  "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System — extension bindings, slash-command surface, and Host-Integration SDK adapter for AI coding agents",
+  "description": "Oh My Pi host plugin for the GSD Embeddable Orchestration System — extension bindings, slash-command surface, Host-Integration SDK adapter, and optional Goal Mode status integration for AI coding agents",
   "license": "MIT",
   "author": "tchivs",
   "type": "commonjs",
@@ -13,7 +13,10 @@
     "src",
     "README.md",
     "README.zh-CN.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs"
   ],
   "scripts": {
     "lint": "node --check bin/gsd-omp.cjs && node --check src/eos.cjs && node --check src/extension.cjs && node --check src/gsd-graphify-worker.cjs && node --check src/locale.cjs && node --check src/locales/en.cjs && node --check src/locales/zh-CN.cjs && node --check src/projection.cjs",
@@ -40,6 +43,7 @@
     "omp",
     "oh-my-pi",
     "eos",
+    "goal-mode",
     "host-plugin",
     "orchestration",
     "embeddable",

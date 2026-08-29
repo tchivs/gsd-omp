@@ -3,7 +3,7 @@
 
 ## Scope
 
-This document covers configuration that affects the `gsd-omp` installer and its OMP extension: runtime-root selection, projected-agent lookup, shell and project-session localization, installer arguments, manifest ownership, and optional OMP Goal Mode coordination. It targets maintainers and operators of `gsd-omp` v1.0.20. GSD Core's complete project configuration schema remains owned by `@opengsd/gsd-core`; only fields read by this plugin are described here.
+This document covers configuration that affects the `gsd-omp` installer and its OMP extension: runtime-root selection, projected-agent lookup, shell and project-session localization, installer arguments, manifest ownership, and optional OMP Goal Mode coordination. It targets maintainers and operators of the current `gsd-omp` release. GSD Core's complete project configuration schema remains owned by `@opengsd/gsd-core`; only fields read by this plugin are described here.
 
 Relevant implementation paths:
 
