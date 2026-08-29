@@ -17,7 +17,7 @@ For the architecture and runtime boundaries, see [Architecture](ARCHITECTURE.md)
 Install the latest released plugin globally:
 
 ```bash
-npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.21.tar.gz
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.22.tar.gz
 ```
 
 If OMP is not already installed, install a host version covered by the compatibility checks (the pinned fallback is OMP `17.0.3`):
@@ -80,7 +80,7 @@ Restart OMP after a successful update. If the release check cannot reach GitHub,
 
 ```bash
 gsd-omp uninstall
-npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.21.tar.gz
+npm install --global https://github.com/tchivs/gsd-omp/archive/refs/tags/v1.0.22.tar.gz
 gsd-omp install
 ```
 
