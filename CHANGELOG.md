@@ -50,7 +50,7 @@ Related: [PR #53](https://github.com/tchivs/gsd-omp/pull/53), [release PR #54](h
 
 Related: [PR #51](https://github.com/tchivs/gsd-omp/pull/51), [release PR #52](https://github.com/tchivs/gsd-omp/pull/52).
 
-[Unreleased]: https://github.com/tchivs/gsd-omp/compare/v1.0.22...HEAD
+[Unreleased]: https://github.com/tchivs/gsd-omp/compare/v1.0.23...HEAD
 [1.0.20]: https://github.com/tchivs/gsd-omp/releases/tag/v1.0.20
 [1.0.19]: https://github.com/tchivs/gsd-omp/releases/tag/v1.0.19
 [1.0.18]: https://github.com/tchivs/gsd-omp/releases/tag/v1.0.18
