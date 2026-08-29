@@ -230,8 +230,9 @@ test('tracks OMP Goal Mode events in the GSD status surface', async () => {
     await pi.events.get('goal_updated')({ type: 'goal_updated', goal, state: { enabled: true, mode: 'active', goal } }, ctx);
     assert.match(statuses.at(-1)[1], /GOAL active 1,234\/5,000/);
     const plain = widgets.at(-1).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
-    assert.match(plain, /GOAL active/);
-    assert.match(plain, /Ship the native integration/);
+    assert.match(plain, /GOAL\s+active/);
+    assert.match(plain, /Ship the nati/);
+    assert.match(plain, /1,234\/5,000/);
     assert.match(plain, /\/goal pause/);
 
     await pi.commands.get('gsd-status').handler('', ctx);
@@ -278,8 +279,8 @@ test('restores Goal Mode from the OMP session journal when no getter exists', as
     await pi.events.get('session_start')({}, ctx);
     assert.match(statuses.at(-1)[1], /GOAL paused 80\/100/);
     const plain = widgets.at(-1).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
-    assert.match(plain, /GOAL paused/);
-    assert.match(plain, /Keep the GSD project moving/);
+    assert.match(plain, /GOAL\s+paused/);
+    assert.match(plain, /Keep the GSD/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -781,7 +782,7 @@ test('failed GSD task request releases tracked names', async () => {
 });
 
 
-test('renders a compact OMP status strip instead of a raw task-count banner', async () => {
+test('renders a two-line OMP status hint instead of a dense task dashboard', async () => {
   const root = gsdProjectRoot();
   try {
     fs.writeFileSync(
@@ -793,13 +794,15 @@ test('renders a compact OMP status strip instead of a raw task-count banner', as
     const ctx = { cwd: root };
     await pi.events.get('tool_call')(taskSpawnCall('call_widget', ['Phase1Plan06Executor']), ctx);
     const plain = extension._internals.widgetLines(root).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
-    assert.match(plain, /^GSD \/ OMP  RUNNING\n/);
-    assert.match(plain, /PHASE 2 · Build/);
-    assert.match(plain, /PLANS █████░░░░░ 2\/4/);
-    assert.match(plain, /TASKS 1 active · 2 concerns/);
-    assert.match(plain, /  \/gsd-status$/);
-    assert.doesNotMatch(plain, /├─|└─|GSD · OMP Native|OMP native execution active|native tasks running|⚠|⛔/);
-    assert.equal(plain.split('\n').some((line) => /\s$/.test(line)), false);
+    assert.deepEqual(plain.split('\n'), [
+      'GSD / OMP  RUNNING',
+      '1 active · 2 concerns · /gsd-status',
+    ]);
+    assert.doesNotMatch(plain, /PHASE|PLANS|TASKS|RISK|├─|└─|GSD · OMP Native|OMP native execution active|native tasks running|⚠|⛔/);
+    const lines = plain.split('\n');
+    assert.equal(lines.length <= 2, true);
+    assert.equal(lines.some((line) => line.length > 44), false);
+    assert.equal(lines.some((line) => /\s$/.test(line)), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
