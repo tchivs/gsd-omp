@@ -23,10 +23,29 @@ function mockPi() {
   const commands = new Map();
   const tools = new Map();
   const events = new Map();
+  const renderers = new Map();
+  const shortcuts = new Map();
+  const flags = new Map();
+  class MockText {
+    constructor(text, x, y) {
+      this.text = text;
+      this.x = x;
+      this.y = y;
+    }
+  }
+  class MockContainer {
+    constructor() { this.children = []; }
+    addChild(child) { this.children.push(child); }
+    invalidate() {}
+  }
   return {
     commands,
     tools,
     events,
+    renderers,
+    shortcuts,
+    flags,
+    pi: { Text: MockText, Container: MockContainer },
     zod: {
       object: schema,
       string: schema,
@@ -35,12 +54,246 @@ function mockPi() {
     },
     registerCommand(name, contract) { commands.set(name, contract); },
     registerTool(contract) { tools.set(contract.name, contract); },
+    registerMessageRenderer(name, renderer) { renderers.set(name, renderer); },
+    registerShortcut(name, contract) { shortcuts.set(name, contract); },
+    registerFlag(name, contract) { flags.set(name, contract.default); },
+    getFlag(name) { return flags.get(name); },
     on(name, handler) { events.set(name, handler); },
     async sendMessage() {},
     getSessionName() { return ''; },
     async setSessionName() {},
   };
 }
+
+test('registers native message renderers and updates the OMP status surface', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-renderer-'));
+  try {
+    fs.mkdirSync(path.join(root, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.planning', 'STATE.md'), '# State\\n');
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    assert.equal(pi.renderers.has('gsd-status-summary'), true);
+    const rendered = pi.renderers.get('gsd-status-summary')(
+      { customType: 'gsd-status-summary', content: 'GSD Project Status' },
+      { expanded: false },
+      { fg: (tone, text) => `<${tone}>${text}`, bold: (text) => `**${text}**` },
+    );
+    assert.equal(rendered.text, '**<accent>GSD · Status Summary**\nGSD Project Status');
+
+    const statuses = [];
+    const workingMessages = [];
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: {
+        setWidget() {},
+        setStatus(key, text) { statuses.push([key, text]); },
+        setWorkingMessage(text) { workingMessages.push(text); },
+        theme: { fg: (_tone, text) => text },
+      },
+    };
+    await pi.events.get('session_start')({}, ctx);
+    assert.equal(statuses.at(-1)[0], 'gsd');
+    assert.match(statuses.at(-1)[1], /STATE ERROR/);
+    assert.equal(workingMessages.at(-1), undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test('uses askDialog for native continuation choices when select is absent', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-ask-dialog-'));
+  try {
+    fs.mkdirSync(path.join(root, '.planning'), { recursive: true });
+    fs.writeFileSync(path.join(root, '.planning', 'STATE.md'), '# State\\n');
+    fs.writeFileSync(path.join(root, '.planning', '.omp-next-action.json'), JSON.stringify({ command: '/gsd-status', label: 'Show status' }));
+    const questions = [];
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: {
+        askDialog: async (received) => {
+          questions.push(received);
+          return { kind: 'submit', results: [{ id: 'choice', question: received[0].question, options: [], multi: false, selectedOptions: [received[0].options[0].label] }] };
+        },
+      },
+    };
+    await pi.commands.get('gsd-next').handler('', ctx);
+    assert.equal(questions.length, 1);
+    assert.equal(questions[0][0].id, 'choice');
+    assert.equal(sent[0].customType, 'gsd-native-continuation');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('exposes the projected GSD skill root through resources_discover', () => {
+  const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-resources-'));
+  try {
+    const skillsRoot = path.join(runtimeRoot, 'skills');
+    fs.mkdirSync(skillsRoot);
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot });
+    const result = pi.events.get('resources_discover')({ type: 'resources_discover', cwd: runtimeRoot, reason: 'startup' }, { cwd: runtimeRoot });
+    assert.deepEqual(result, { skillPaths: [skillsRoot] });
+  } finally {
+    fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  }
+});
+
+test('shows context and async-job state and delegates confirmed abort to OMP', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const sent = [];
+    const statuses = [];
+    const workingMessages = [];
+    let aborts = 0;
+    let compactions = 0;
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      getContextUsage: () => ({ tokens: 920, contextWindow: 1000, percent: 92 }),
+      getAsyncJobSnapshot: () => ({ running: [{ id: 'job_1', type: 'task', status: 'running', label: 'Plan', startTime: Date.now() }], recent: [], delivery: {} }),
+      isIdle: () => false,
+      compact: async () => { compactions += 1; },
+      abort: () => { aborts += 1; },
+      ui: {
+        setWidget() {},
+        setStatus(key, text) { statuses.push([key, text]); },
+        setWorkingMessage(text) { workingMessages.push(text); },
+        confirm: async () => true,
+        theme: { fg: (_tone, text) => text },
+      },
+    };
+
+    await pi.events.get('auto_compaction_start')({ type: 'auto_compaction_start', reason: 'threshold', action: 'context-full' }, ctx);
+    assert.match(statuses.at(-1)[1], /compacting/);
+    assert.equal(workingMessages.at(-1), 'GSD: compacting context');
+
+    await pi.commands.get('gsd-status').handler('', ctx);
+    assert.match(sent[0].content, /Context: 920\/1000 \(near limit\)/);
+    assert.match(sent[0].content, /OMP tasks: 1 async task running/);
+    await pi.commands.get('gsd-status').handler('--compact', ctx);
+    assert.equal(compactions, 1);
+    assert.equal(sent.at(-1).customType, 'gsd-native-compact');
+    assert.match(sent.at(-1).content, /compaction completed/);
+
+    await pi.commands.get('gsd-status').handler('--stop', ctx);
+    assert.equal(aborts, 1);
+    assert.equal(sent.at(-1).customType, 'gsd-native-abort');
+    assert.match(sent.at(-1).content, /was asked to stop/);
+
+    await pi.events.get('auto_compaction_end')({ type: 'auto_compaction_end', action: 'context-full', aborted: false, willRetry: false }, ctx);
+    assert.equal(workingMessages.at(-1), undefined);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('routes native session controls through the existing GSD status command', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const sent = [];
+    const actions = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      waitForIdle: async () => { actions.push('idle'); },
+      branch: async (entryId) => { actions.push(['branch', entryId]); return { cancelled: false }; },
+      navigateTree: async (entryId, options) => { actions.push(['tree', entryId, options.summarize]); return { cancelled: false }; },
+      switchSession: async (sessionPath) => { actions.push(['switch', sessionPath]); return { cancelled: false }; },
+      reload: async () => { actions.push('reload'); },
+      ui: { confirm: async () => true },
+    };
+    await pi.commands.get('gsd-status').handler('--branch entry_1', ctx);
+    await pi.commands.get('gsd-status').handler('--tree entry_2 --summarize', ctx);
+    await pi.commands.get('gsd-status').handler('--switch /tmp/omp-session.json', ctx);
+    await pi.commands.get('gsd-status').handler('--reload', ctx);
+    assert.deepEqual(actions, [
+      'idle', ['branch', 'entry_1'],
+      'idle', ['tree', 'entry_2', true],
+      'idle', ['switch', '/tmp/omp-session.json'],
+      'idle', 'reload',
+    ]);
+    assert.equal(sent.length, 4);
+    assert.equal(sent.every((message) => message.customType === 'gsd-native-session'), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+test('opens the native status overlay and can edit the pending action', async () => {
+  const root = gsdProjectRoot();
+  try {
+    fs.writeFileSync(path.join(root, '.planning', '.omp-next-action.json'), JSON.stringify({ command: '/gsd-status', label: 'Show status' }));
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    assert.equal(pi.shortcuts.has('ctrl+shift+g'), true);
+    assert.equal(pi.flags.has('gsd-status'), true);
+    let overlays = 0;
+    let editorCalls = 0;
+    let editorText = null;
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: {
+        custom: async (factory) => {
+          overlays += 1;
+          let result;
+          const component = factory({ requestRender() {} }, { fg: (_tone, text) => text, bold: (text) => text }, {}, (value) => { result = value; });
+          component.handleInput('e');
+          return result;
+        },
+        editor: async () => {
+          editorCalls += 1;
+          return '/gsd-status';
+        },
+        setEditorText(value) { editorText = value; },
+        notify() {},
+      },
+    };
+    await pi.shortcuts.get('ctrl+shift+g').handler(ctx);
+    assert.equal(overlays, 1);
+    assert.equal(editorCalls, 1);
+    assert.equal(editorText, '/gsd-status');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+
+test('specializes projected skills with native validation, completions, and session setup', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-projected-'));
+  try {
+    const sent = [];
+    for (const name of ['gsd-config', 'gsd-review', 'gsd-explore']) {
+      const dir = path.join(root, 'skills', name);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'SKILL.md'), `---\nname: ${name}\ndescription: test\n---\n`);
+    }
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const configCommand = pi.commands.get('gsd-config');
+    assert.deepEqual(configCommand.getArgumentCompletions('--a').map(({ value }) => value), ['--advanced']);
+    await pi.commands.get('gsd-review').handler('--invalid', { cwd: root });
+    assert.equal(sent[0].customType, 'gsd-projected-skill-input-error');
+    await pi.commands.get('gsd-explore').handler('status widget', { cwd: root });
+    assert.equal(sent[1].customType, 'gsd-native-skill-command');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
  test('registers commands, tool, and lifecycle hooks on the OMP ExtensionAPI', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-extension-'));
@@ -196,6 +449,82 @@ function taskSpawnCall(toolCallId, names) {
     },
   };
 }
+
+test('does not count ordinary OMP task lifecycle as GSD activity', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root, hasUI: false };
+    const event = {
+      type: 'tool_execution_start',
+      toolName: 'task',
+      toolCallId: 'ordinary_task',
+      args: { task: 'inspect a fixture', agent: 'scout', name: 'ordinary-task' },
+    };
+    await pi.events.get('tool_execution_start')(event, ctx);
+    await pi.events.get('tool_execution_update')({
+      ...event,
+      type: 'tool_execution_update',
+      partialResult: { details: { progress: [{ id: 'ordinary-task', agent: 'scout', status: 'running' }] } },
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0);
+    assert.deepEqual(extension._internals._nativeTaskExecutionSnapshot(root), { activeCalls: 0, trackedTasks: 0, updatingTasks: 0 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('tracks native task execution lifecycle and keeps legacy tracking idempotent', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    const args = {
+      context: 'phase execution',
+      tasks: [{ name: 'Phase1Plan10Executor', agent: 'gsd-executor', task: 'do work' }],
+    };
+    await pi.events.get('tool_call')(taskSpawnCall('call_lifecycle', ['Phase1Plan10Executor']), ctx);
+    await pi.events.get('tool_execution_start')({
+      type: 'tool_execution_start',
+      toolName: 'task',
+      toolCallId: 'call_lifecycle',
+      args,
+      intent: 'Execute the next plan',
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 1, 'legacy and lifecycle events share one task reference');
+    assert.deepEqual(extension._internals._nativeTaskExecutionSnapshot(root), { activeCalls: 1, trackedTasks: 1, updatingTasks: 0 });
+
+    await pi.events.get('tool_execution_update')({
+      type: 'tool_execution_update',
+      toolName: 'task',
+      toolCallId: 'call_lifecycle',
+      args,
+      partialResult: {
+        content: [{ type: 'text', text: 'running' }],
+        details: { progress: [{ id: 'Phase1Plan10Executor', agent: 'gsd-executor', status: 'running', currentTool: 'read' }] },
+      },
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskExecutionSnapshot(root).updatingTasks, 1);
+    assert.match(extension._internals.widgetLines(root).join('\n'), /live/);
+
+    await pi.events.get('tool_execution_end')({
+      type: 'tool_execution_end',
+      toolName: 'task',
+      toolCallId: 'call_lifecycle',
+      result: {
+        content: [{ type: 'text', text: 'done' }],
+        details: { results: [{ id: 'Phase1Plan10Executor', agent: 'gsd-executor', exitCode: 0, output: '' }] },
+      },
+      isError: false,
+    }, ctx);
+    assert.equal(extension._internals._nativeTaskActivityCount(root), 0, 'execution end settles synchronous task');
+    assert.deepEqual(extension._internals._nativeTaskExecutionSnapshot(root), { activeCalls: 0, trackedTasks: 0, updatingTasks: 0 });
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('detached GSD task releases its tracked id when the job settles (no stale count)', async () => {
   // Regression: trackGsdTaskRequest keys on task `name` (agent registry id) but

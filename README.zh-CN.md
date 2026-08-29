@@ -55,7 +55,7 @@ gsd-omp install
 
 ## 命令
 
-插件注册了 39 个斜杠命令与 `gsd_invoke` 工具。下表按项目生命周期分组,描述取自命令注册元数据。
+插件注册了 39 个核心斜杠命令与 `gsd_invoke` 工具。OMP 还会接收安装运行时投影的其他 `gsd-*` skill 命令。下表按项目生命周期分组，说明取自命令注册元数据。
 
 
 ### 入口与状态
@@ -64,7 +64,7 @@ gsd-omp install
 |---|---|
 | `/gsd-next` | 显示或准备下一个本地化的 GSD 动作 |
 | `/gsd-progress` | 显示 GSD 进度,或在门控的下一步工作流中推进 |
-| `/gsd-status` | 显示本地化的 GSD 项目摘要 |
+| `/gsd-status` | 显示本地化的 GSD 项目摘要、上下文预算和原生任务状态 |
 | `/gsd <family> <subcommand> [args]` | 直接调用公共 `gsd-tools` CLI |
 
 ### 项目生命周期
@@ -133,6 +133,25 @@ gsd-omp install
 | `/gsd-workstreams` | 管理并行的工作流 |
 
 `/gsd` 背后完整的 `gsd-tools` CLI 接口,可运行 `/gsd <family> help`,或以 `subcommand: "help"` 调用 `gsd_invoke` 工具。
+
+### OMP 原生控制
+
+`/gsd-status` 是唯一面向用户的 GSD 状态入口，也接受以下原生控制参数：
+
+| 命令 | 作用 |
+|---|---|
+| `/gsd-status --compact` | 确认后打开 OMP 原生上下文压缩流程 |
+| `/gsd-status --stop` | 确认后请求 OMP 中止当前 agent turn |
+| `/gsd-status --branch ENTRY_ID` | 从指定会话条目创建分支 |
+| `/gsd-status --tree ENTRY_ID [--summarize]` | 导航 Session 树，可选压缩被放弃的路径 |
+| `/gsd-status --switch SESSION_PATH` | 切换到指定的 OMP session 文件 |
+| `/gsd-status --reload` | 重新加载当前 OMP session/runtime 状态 |
+
+快捷键 `Ctrl+Shift+G` 会打开实时原生状态 overlay。在 overlay 中按 `e` 可使用 OMP 多行编辑器编辑待处理的 GSD 动作；按 `Esc` 关闭。OMP flag `--gsd-status` 会在 session 启动时打开相同 overlay。
+
+原生任务执行事件、上下文使用量、自动压缩、自动重试和异步任务结算都会同步到 widget 与 footer。原生任务跟踪保持内部机制，用户状态入口统一为 `/gsd-status`。
+
+当 projected skill 具有稳定参数契约时，插件会提供 OMP 参数补全和 session 命名；底层 projected `SKILL.md` 仍是所有校验、批准、产物和提交门的权威来源。
 
 ## 校验
 

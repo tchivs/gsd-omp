@@ -54,7 +54,7 @@ The plugin also registers the `gsd_invoke` tool for structured access to the pub
 
 ## Commands
 
-The plugin registers 39 slash commands and the `gsd_invoke` tool. Commands are grouped by project lifecycle; descriptions are taken verbatim from the registered command metadata.
+The plugin registers 39 core slash commands and the `gsd_invoke` tool. OMP also receives any additional `gsd-*` skill commands projected by the installed runtime. Commands are grouped by project lifecycle; descriptions are taken from the registered command metadata.
 
 
 ### Entry & status
@@ -63,7 +63,7 @@ The plugin registers 39 slash commands and the `gsd_invoke` tool. Commands are g
 |---|---|
 | `/gsd-next` | Show or prepare the next localized GSD action |
 | `/gsd-progress` | Show GSD progress or advance through its gated next-step workflow |
-| `/gsd-status` | Show a localized GSD project summary |
+| `/gsd-status` | Show the localized project summary, context budget, and native job state |
 | `/gsd <family> <subcommand> [args]` | Invoke the public `gsd-tools` CLI directly |
 
 ### Project lifecycle
@@ -132,6 +132,25 @@ The plugin registers 39 slash commands and the `gsd_invoke` tool. Commands are g
 | `/gsd-workstreams` | Manage parallel workstreams |
 
 For the full `gsd-tools` CLI surface behind `/gsd`, run `/gsd <family> help` or call the `gsd_invoke` tool with `subcommand: "help"`.
+
+### Native OMP controls
+
+`/gsd-status` is the single user-facing GSD status entry. It accepts these optional native controls:
+
+| Command | Effect |
+|---|---|
+| `/gsd-status --compact` | Open OMP's context compaction flow after confirmation |
+| `/gsd-status --stop` | Ask OMP to abort the current agent turn after confirmation |
+| `/gsd-status --branch ENTRY_ID` | Branch the current session from an entry |
+| `/gsd-status --tree ENTRY_ID [--summarize]` | Navigate the session tree, optionally summarizing the abandoned path |
+| `/gsd-status --switch SESSION_PATH` | Switch to a known OMP session file |
+| `/gsd-status --reload` | Reload the current OMP session/runtime state |
+
+The `Ctrl+Shift+G` shortcut opens a live native status overlay. Press `e` inside the overlay to edit the pending GSD action in OMP's multiline editor; press `Esc` to close it. The `--gsd-status` OMP flag opens the same overlay when the session starts.
+
+Native task execution events, context usage, automatic compaction, retry state, and detached job settlement feed the widget and footer. Native task tracking stays internal; `/gsd-status` is the status surface.
+
+Projected skills receive OMP argument completion and session labels where their workflow has a stable argument contract. The underlying projected `SKILL.md` remains authoritative for every validation, approval, artifact, and commit gate.
 
 ## Verify
 
