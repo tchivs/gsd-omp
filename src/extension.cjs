@@ -1924,30 +1924,41 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const state = stateSnapshot(cwd);
     const goal = goalState?.goal || null;
     const goalActive = goalState?.enabled === true && goal.status === 'active';
-    const progress = state && !state.unreadable ? planProgress(cwd, state) : null;
     const checkpoint = !activeTaskCount && !recovery && !action ? resumableCheckpoint(cwd, state) : null;
     const hasRisks = Boolean(state?.blockers || state?.concerns);
     if (!state && !activeTaskCount && !action && !recovery && !checkpoint && !goal) return [];
 
-    const progressBar = (value) => {
-      const width = value.bar.length;
-      const filled = Math.round((value.completed / value.total) * width);
-      return `${filled ? widgetColor(WIDGET_COLORS.accent, '█'.repeat(filled)) : ''}${filled < width ? widgetColor(WIDGET_COLORS.muted, '░'.repeat(width - filled)) : ''}`;
+    const widgetWidth = 44;
+    const separator = ' · ';
+    const header = (status, color, command = null) => {
+      const base = `${widgetColor(WIDGET_COLORS.accent, 'GSD')} ${widgetColor(WIDGET_COLORS.muted, '/ OMP')}  ${widgetColor(color, status)}`;
+      return command ? `${base}${widgetColor(WIDGET_COLORS.muted, separator)}${widgetColor(WIDGET_COLORS.accent, compactGoalObjective(command, 24))}` : base;
     };
-    const metric = (label, value) => `${widgetColor(WIDGET_COLORS.muted, label)} ${value}`;
-    const header = (status, color) => `${widgetColor(WIDGET_COLORS.accent, 'GSD')} ${widgetColor(WIDGET_COLORS.muted, '/ OMP')}  ${widgetColor(color, status)}`;
-    const liveSuffix = taskExecution.activeCalls
-      ? chinese ? ' · 实时' : ' · live'
-      : '';
-    const activeRow = activeTaskCount
-      ? metric(chinese ? '任务' : 'TASKS', chinese ? `${activeTaskCount} 个运行中${liveSuffix}` : `${activeTaskCount} active${liveSuffix}`)
-      : null;
-    const phaseRow = state && state.phase && state.phase !== '—'
-      ? metric(chinese ? '阶段' : 'PHASE', `${state.phase}${state.phaseName ? ` · ${state.phaseName}` : ''}`)
-      : null;
-    const progressRow = progress
-      ? metric(chinese ? '计划' : 'PLANS', `${progressBar(progress)} ${progress.completed}/${progress.total}`)
-      : null;
+    const detailLine = (parts, command = null, color = WIDGET_COLORS.muted) => {
+      const values = (Array.isArray(parts) ? parts : [parts])
+        .map((part) => String(part ?? '').replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+      const commandText = command ? compactGoalObjective(command, 24) : '';
+      const commandSuffix = commandText ? separator.length + commandText.length : 0;
+      const bodyWidth = Math.max(1, widgetWidth - commandSuffix);
+      const body = values.length ? compactGoalObjective(values.join(separator), bodyWidth) : '';
+      const bodyText = body ? widgetColor(color, body) : '';
+      if (!commandText) return bodyText;
+      const commandTextStyled = widgetColor(WIDGET_COLORS.accent, commandText);
+      return bodyText
+        ? `${bodyText}${widgetColor(WIDGET_COLORS.muted, separator)}${commandTextStyled}`
+        : commandTextStyled;
+    };
+    const goalParts = (goalValue, prefix) => {
+      const budget = goalBudgetText(goalValue, chinese, true);
+      const fixedWidth = prefix.length + separator.length + budget.length + separator.length;
+      const objectiveWidth = Math.max(8, widgetWidth - fixedWidth);
+      return [prefix, compactGoalObjective(goalValue.objective, objectiveWidth), budget];
+    };
+    const riskParts = [];
+    if (state?.blockers) riskParts.push(chinese ? `${state.blockers} 项阻塞` : `${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`);
+    if (state?.concerns) riskParts.push(chinese ? `${state.concerns} 项关注` : `${state.concerns} concern${state.concerns === 1 ? '' : 's'}`);
+    const riskText = riskParts.join(separator);
     const goalColor = goal?.status === 'active'
       ? WIDGET_COLORS.accent
       : goal?.status === 'complete'
@@ -1955,57 +1966,70 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         : goal?.status === 'dropped'
           ? WIDGET_COLORS.muted
           : WIDGET_COLORS.warning;
-    const goalRow = goal
-      ? metric(chinese ? '目标' : 'GOAL', `${widgetColor(goalColor, goalStatusLabel(goal.status, chinese))} · ${compactGoalObjective(goal.objective, 56)} · ${goalBudgetText(goal, chinese, true)}`)
-      : null;
-    const recoveryCount = recovery?.failures.length || 0;
-    const recoveryRow = recoveryCount
-      ? widgetColor(WIDGET_COLORS.danger, chinese ? `恢复 ${recoveryCount} 个失败任务` : `RECOVERY ${recoveryCount} failed`)
-      : null;
-    const checkpointRow = checkpoint
-      ? widgetColor(WIDGET_COLORS.warning, chinese ? `恢复阶段 ${checkpoint.phase} · ${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划` : `RESUME phase ${checkpoint.phase} · ${checkpoint.plansDone}/${checkpoint.plansTotal} plans`)
-      : null;
-    const riskRow = hasRisks ? widgetRiskLine(state, chinese) : null;
-    const actionRow = action
-      ? widgetColor(WIDGET_COLORS.accent, `${chinese ? '下一步' : 'NEXT'} ${action.label.slice(0, 92)}`)
-      : null;
-
-    if (state?.unreadable) {
-      const lines = [
-        header(chinese ? '状态异常' : 'STATE ERROR', WIDGET_COLORS.danger),
-        widgetColor(WIDGET_COLORS.danger, chinese ? '状态文件无法解析' : 'STATE.md unreadable'),
-        ...[goalRow, activeRow, recoveryRow].filter(Boolean),
-      ];
-      const command = activeTaskCount ? '/gsd-status' : goalActive ? '/goal pause' : recovery?.command;
-      if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
-      return lines;
-    }
-
-    if (!hasRisks && !activeTaskCount && !action && !recovery && !checkpoint && !goal) return [];
-    const status = activeTaskCount
-      ? [chinese ? '执行中' : 'RUNNING', WIDGET_COLORS.accent]
-      : recovery
-        ? [chinese ? '需要恢复' : 'RECOVERY', WIDGET_COLORS.danger]
-        : goalActive
-          ? [chinese ? '目标中' : 'GOAL', WIDGET_COLORS.accent]
-          : action
-            ? [chinese ? '下一步' : 'NEXT', WIDGET_COLORS.accent]
-            : checkpoint
-              ? [chinese ? '可恢复' : 'RESUME', WIDGET_COLORS.warning]
-              : goal
-                ? [chinese ? `目标 ${goalStatusLabel(goal.status, true)}` : `GOAL ${goalStatusLabel(goal.status, false)}`, goalColor]
-                : [chinese ? '需要关注' : 'ATTENTION', WIDGET_COLORS.warning];
-    const lines = [header(status[0], status[1])];
-    for (const row of [phaseRow, progressRow, goalRow, [activeRow, riskRow].filter(Boolean).join(' · '), recoveryRow, checkpointRow, actionRow]) {
-      if (row) lines.push(row);
-    }
-    const command = goalActive
-      ? '/goal pause'
+    const status = state?.unreadable
+      ? [chinese ? '状态异常' : 'STATE ERROR', WIDGET_COLORS.danger]
       : activeTaskCount
-        ? '/gsd-status'
-        : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
-    if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
-    return lines;
+        ? [chinese ? '执行中' : 'RUNNING', state?.blockers ? WIDGET_COLORS.danger : WIDGET_COLORS.accent]
+        : recovery
+          ? [chinese ? '需要恢复' : 'RECOVERY', WIDGET_COLORS.danger]
+          : goalActive
+            ? [chinese ? `目标 ${goalStatusLabel(goal.status, true)}` : `GOAL ${goalStatusLabel(goal.status, false)}`, WIDGET_COLORS.accent]
+            : action
+              ? [chinese ? '下一步' : 'NEXT', WIDGET_COLORS.accent]
+              : checkpoint
+                ? [chinese ? '可恢复' : 'RESUME', WIDGET_COLORS.warning]
+                : goal
+                  ? [chinese ? `目标 ${goalStatusLabel(goal.status, true)}` : `GOAL ${goalStatusLabel(goal.status, false)}`, goalColor]
+                  : [chinese ? '需要关注' : 'REVIEW', WIDGET_COLORS.warning];
+
+    let detailParts;
+    let command = null;
+    let headerCommand = null;
+    let detailColor = WIDGET_COLORS.muted;
+    if (state?.unreadable) {
+      if (goal) {
+        detailParts = goalParts(goal, `${chinese ? '目标' : 'GOAL'} ${goalStatusLabel(goal.status, chinese)}`);
+        headerCommand = goalActive ? '/goal pause' : null;
+      } else if (activeTaskCount) {
+        detailParts = [chinese ? `${activeTaskCount} 个任务${taskExecution.activeCalls ? ' · 实时' : ''}` : `${activeTaskCount} active${taskExecution.activeCalls ? ' · live' : ''}`];
+        command = '/gsd-status';
+      } else {
+        detailParts = [chinese ? '状态文件无法解析' : 'STATE.md unreadable'];
+        command = '/gsd-status';
+        detailColor = WIDGET_COLORS.danger;
+      }
+    } else if (goalActive) {
+      detailParts = goalParts(goal, goalStatusLabel(goal.status, chinese));
+      headerCommand = '/goal pause';
+    } else if (recovery) {
+      detailParts = [chinese ? `${recovery.failures.length} 个失败任务` : `${recovery.failures.length} failed`];
+      command = recovery.command;
+      detailColor = WIDGET_COLORS.danger;
+    } else if (activeTaskCount) {
+      detailParts = [
+        chinese ? `${activeTaskCount} 个任务${taskExecution.activeCalls ? ' · 实时' : ''}` : `${activeTaskCount} active${taskExecution.activeCalls ? ' · live' : ''}`,
+        riskText,
+      ];
+      command = '/gsd-status';
+    } else if (action) {
+      detailParts = [action.label];
+      command = action.command;
+    } else if (checkpoint) {
+      detailParts = [
+        chinese ? `阶段 ${checkpoint.phase}` : `Phase ${checkpoint.phase}`,
+        `${checkpoint.plansDone}/${checkpoint.plansTotal} ${chinese ? '个计划' : 'plans'}`,
+      ];
+      command = '/gsd-resume-work';
+    } else if (goal) {
+      detailParts = goalParts(goal, goalStatusLabel(goal.status, chinese));
+    } else if (hasRisks) {
+      detailParts = [riskText];
+      command = '/gsd-status';
+    } else {
+      return [];
+    }
+
+    return [header(status[0], status[1], headerCommand), detailLine(detailParts, command, detailColor)].filter(Boolean);
   }
 
   function localizedStatusSummary(cwd) {
@@ -2052,12 +2076,6 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     return `\u001b[${code}m${text}\u001b[0m`;
   }
 
-  function widgetRiskLine(state, chinese) {
-    const parts = [];
-    if (state.blockers) parts.push(widgetColor(WIDGET_COLORS.danger, chinese ? `${state.blockers} 项阻塞` : `${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`));
-    if (state.concerns) parts.push(widgetColor(WIDGET_COLORS.warning, chinese ? `${state.concerns} 项关注` : `${state.concerns} concern${state.concerns === 1 ? '' : 's'}`));
-    return parts.join(' · ');
-  }
 
 
   const nativeMessageWorkflowNames = Object.freeze([
