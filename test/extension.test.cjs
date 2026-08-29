@@ -278,23 +278,25 @@ test('failed GSD task request releases tracked names', async () => {
 });
 
 
-test('renders concise OMP-native progress instead of a raw task-count banner', async () => {
+test('renders a compact OMP status strip instead of a raw task-count banner', async () => {
   const root = gsdProjectRoot();
   try {
     fs.writeFileSync(
       path.join(root, '.planning', 'STATE.md'),
-      '---\nstatus: executing\nprogress:\n  total_plans: 4\n  completed_plans: 2\n---\nPhase: 2 of 3 (Build)\nStatus: executing\n',
+      '---\nstatus: executing\nprogress:\n  total_plans: 4\n  completed_plans: 2\n---\nPhase: 2 of 3 (Build)\nStatus: executing\n\n## Concerns\n- first concern\n- second concern\n',
     );
     const pi = mockPi();
     extension(pi, { runtime: 'omp', runtimeRoot: root });
     const ctx = { cwd: root };
     await pi.events.get('tool_call')(taskSpawnCall('call_widget', ['Phase1Plan06Executor']), ctx);
     const plain = extension._internals.widgetLines(root).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
-    assert.match(plain, /GSD · OMP Native/);
-    assert.match(plain, /OMP native execution active/);
-    assert.match(plain, /Progress .*Plans 2\/4 complete/);
-    assert.match(plain, /\/gsd-status/);
-    assert.doesNotMatch(plain, /native tasks running/);
+    assert.match(plain, /^GSD \/ OMP  RUNNING\n/);
+    assert.match(plain, /PHASE 2 · Build/);
+    assert.match(plain, /PLANS █████░░░░░ 2\/4/);
+    assert.match(plain, /TASKS 1 active · 2 concerns/);
+    assert.match(plain, /  \/gsd-status$/);
+    assert.doesNotMatch(plain, /├─|└─|GSD · OMP Native|OMP native execution active|native tasks running|⚠|⛔/);
+    assert.equal(plain.split('\n').some((line) => /\s$/.test(line)), false);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }

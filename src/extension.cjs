@@ -1590,49 +1590,64 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const state = stateSnapshot(cwd);
     const progress = state && !state.unreadable ? planProgress(cwd, state) : null;
     const checkpoint = !activeTaskCount && !recovery && !action ? resumableCheckpoint(cwd, state) : null;
+    const hasRisks = Boolean(state?.blockers || state?.concerns);
     if (!state && !activeTaskCount && !action && !recovery && !checkpoint) return [];
+
+    const progressBar = (value) => {
+      const width = value.bar.length;
+      const filled = Math.round((value.completed / value.total) * width);
+      return `${filled ? widgetColor(WIDGET_COLORS.accent, '█'.repeat(filled)) : ''}${filled < width ? widgetColor(WIDGET_COLORS.muted, '░'.repeat(width - filled)) : ''}`;
+    };
+    const metric = (label, value) => `${widgetColor(WIDGET_COLORS.muted, label)} ${value}`;
+    const header = (status, color) => `${widgetColor(WIDGET_COLORS.accent, 'GSD')} ${widgetColor(WIDGET_COLORS.muted, '/ OMP')}  ${widgetColor(color, status)}`;
     const activeRow = activeTaskCount
-      ? widgetColor(WIDGET_COLORS.accent, chinese ? '● OMP 原生执行中' : '● OMP native execution active')
+      ? metric(chinese ? '任务' : 'TASKS', chinese ? `${activeTaskCount} 个运行中` : `${activeTaskCount} active`)
       : null;
-    const progressRow = activeTaskCount && progress
-      ? widgetColor(WIDGET_COLORS.muted, chinese
-        ? `进度 ${progress.bar} ${localizedPlanProgress(progress, cwd, true)}`
-        : `Progress ${progress.bar} ${localizedPlanProgress(progress, cwd, true)}`)
+    const phaseRow = state && state.phase && state.phase !== '—'
+      ? metric(chinese ? '阶段' : 'PHASE', `${state.phase}${state.phaseName ? ` · ${state.phaseName}` : ''}`)
+      : null;
+    const progressRow = progress
+      ? metric(chinese ? '计划' : 'PLANS', `${progressBar(progress)} ${progress.completed}/${progress.total}`)
       : null;
     const recoveryCount = recovery?.failures.length || 0;
     const recoveryRow = recoveryCount
-      ? widgetColor(WIDGET_COLORS.danger, chinese ? `⛔ ${recoveryCount} 个原生任务待恢复` : `⛔ Native task recovery: ${recoveryCount} failed`)
+      ? widgetColor(WIDGET_COLORS.danger, chinese ? `恢复 ${recoveryCount} 个失败任务` : `RECOVERY ${recoveryCount} failed`)
       : null;
     const checkpointRow = checkpoint
-      ? widgetColor(WIDGET_COLORS.warning, chinese ? `↻ 恢复阶段 ${checkpoint.phase}：${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划已完成` : `↻ Resume Phase ${checkpoint.phase}: ${checkpoint.plansDone}/${checkpoint.plansTotal} plans complete`)
+      ? widgetColor(WIDGET_COLORS.warning, chinese ? `恢复阶段 ${checkpoint.phase} · ${checkpoint.plansDone}/${checkpoint.plansTotal} 个计划` : `RESUME phase ${checkpoint.phase} · ${checkpoint.plansDone}/${checkpoint.plansTotal} plans`)
       : null;
+    const riskRow = hasRisks ? widgetRiskLine(state, chinese) : null;
+    const actionRow = action
+      ? widgetColor(WIDGET_COLORS.accent, `${chinese ? '下一步' : 'NEXT'} ${action.label.slice(0, 92)}`)
+      : null;
+
     if (state?.unreadable) {
-      const rows = [activeRow, recoveryRow].filter(Boolean);
-      const lines = [widgetColor(WIDGET_COLORS.danger, chinese ? 'GSD · 状态文件无法解析' : 'GSD · state unreadable'), ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
-      if (activeRow || recoveryRow) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, activeRow ? '/gsd-status' : recovery.command)}`);
+      const lines = [
+        header(chinese ? '状态异常' : 'STATE ERROR', WIDGET_COLORS.danger),
+        widgetColor(WIDGET_COLORS.danger, chinese ? '状态文件无法解析' : 'STATE.md unreadable'),
+        ...[activeRow, recoveryRow].filter(Boolean),
+      ];
+      const command = activeTaskCount ? '/gsd-status' : recovery?.command;
+      if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
       return lines;
     }
-    const hasRisks = Boolean(state?.blockers || state?.concerns);
-    if (!hasRisks && !activeRow && !action && !recovery && !checkpoint) return [];
-    const heading = activeRow
-      ? widgetColor(WIDGET_COLORS.accent, chinese ? 'GSD · OMP 原生执行中' : 'GSD · OMP Native')
+
+    if (!hasRisks && !activeTaskCount && !action && !recovery && !checkpoint) return [];
+    const status = activeTaskCount
+      ? [chinese ? '执行中' : 'RUNNING', WIDGET_COLORS.accent]
       : recovery
-        ? widgetColor(WIDGET_COLORS.danger, chinese ? 'GSD · 需要任务恢复' : 'GSD · Recovery needed')
+        ? [chinese ? '需要恢复' : 'RECOVERY', WIDGET_COLORS.danger]
         : action
-          ? widgetColor(WIDGET_COLORS.accent, chinese ? 'GSD · 下一步' : 'GSD · Next Up')
+          ? [chinese ? '下一步' : 'NEXT', WIDGET_COLORS.accent]
           : checkpoint
-            ? widgetColor(WIDGET_COLORS.warning, chinese ? 'GSD · 可恢复执行' : 'GSD · Resume available')
-            : widgetColor(WIDGET_COLORS.warning, chinese ? 'GSD · 需要关注' : 'GSD · Attention');
-    const rows = [];
-    if (hasRisks) rows.push(widgetRiskLine(state, chinese));
-    if (activeRow) rows.push(activeRow);
-    if (progressRow) rows.push(progressRow);
-    if (recoveryRow) rows.push(recoveryRow);
-    if (checkpointRow) rows.push(checkpointRow);
-    if (action) rows.push(action.label.slice(0, 92));
-    const lines = [heading, ...rows.map((row, index) => `${index === rows.length - 1 ? '└─' : '├─'} ${row}`)];
+            ? [chinese ? '可恢复' : 'RESUME', WIDGET_COLORS.warning]
+            : [chinese ? '需要关注' : 'ATTENTION', WIDGET_COLORS.warning];
+    const lines = [header(status[0], status[1])];
+    for (const row of [phaseRow, progressRow, [activeRow, riskRow].filter(Boolean).join(' · '), recoveryRow, checkpointRow, actionRow]) {
+      if (row) lines.push(row);
+    }
     const command = activeTaskCount ? '/gsd-status' : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
-    if (command) lines.push(`   ${widgetColor(WIDGET_COLORS.muted, command)}`);
+    if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
     return lines;
   }
 
@@ -1682,8 +1697,8 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   function widgetRiskLine(state, chinese) {
     const parts = [];
-    if (state.blockers) parts.push(widgetColor(WIDGET_COLORS.danger, chinese ? `⛔ ${state.blockers} 阻塞` : `⛔ ${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`));
-    if (state.concerns) parts.push(widgetColor(WIDGET_COLORS.warning, chinese ? `⚠ ${state.concerns} 关注` : `⚠ ${state.concerns} concern${state.concerns === 1 ? '' : 's'}`));
+    if (state.blockers) parts.push(widgetColor(WIDGET_COLORS.danger, chinese ? `${state.blockers} 项阻塞` : `${state.blockers} blocker${state.blockers === 1 ? '' : 's'}`));
+    if (state.concerns) parts.push(widgetColor(WIDGET_COLORS.warning, chinese ? `${state.concerns} 项关注` : `${state.concerns} concern${state.concerns === 1 ? '' : 's'}`));
     return parts.join(' · ');
   }
 
