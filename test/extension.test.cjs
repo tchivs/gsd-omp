@@ -198,6 +198,180 @@ test('shows context and async-job state and delegates confirmed abort to OMP', a
   }
 });
 
+test('tracks OMP Goal Mode events in the GSD status surface', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const statuses = [];
+    const widgets = [];
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: {
+        setWidget(_key, lines) { widgets.push(lines); },
+        setStatus(key, text) { statuses.push([key, text]); },
+        setWorkingMessage() {},
+        theme: { fg: (_tone, text) => text },
+      },
+    };
+    const goal = {
+      id: 'goal_1',
+      objective: 'Ship the native integration',
+      status: 'active',
+      tokensUsed: 1234,
+      tokenBudget: 5000,
+      timeUsedSeconds: 7,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    await pi.events.get('goal_updated')({ type: 'goal_updated', goal, state: { enabled: true, mode: 'active', goal } }, ctx);
+    assert.match(statuses.at(-1)[1], /GOAL active 1,234\/5,000/);
+    const plain = widgets.at(-1).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
+    assert.match(plain, /GOAL active/);
+    assert.match(plain, /Ship the native integration/);
+    assert.match(plain, /\/goal pause/);
+
+    await pi.commands.get('gsd-status').handler('', ctx);
+    assert.match(sent.at(-1).content, /OMP Goal: active · Ship the native integration/);
+    assert.match(sent.at(-1).content, /Goal budget: 1,234\/5,000, 3,766 remaining/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('restores Goal Mode from the OMP session journal when no getter exists', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const statuses = [];
+    const widgets = [];
+    const pi = mockPi();
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const goal = {
+      id: 'goal_2',
+      objective: 'Keep the GSD project moving',
+      status: 'paused',
+      tokensUsed: 80,
+      tokenBudget: 100,
+      timeUsedSeconds: 2,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      sessionManager: {
+        getEntries: () => [
+          { type: 'mode_change', mode: 'none' },
+          { type: 'mode_change', mode: 'goal_paused', data: { goal } },
+        ],
+      },
+      ui: {
+        setWidget(_key, lines) { widgets.push(lines); },
+        setStatus(key, text) { statuses.push([key, text]); },
+        setWorkingMessage() {},
+        theme: { fg: (_tone, text) => text },
+      },
+    };
+    await pi.events.get('session_start')({}, ctx);
+    assert.match(statuses.at(-1)[1], /GOAL paused 80\/100/);
+    const plain = widgets.at(-1).join('\n').replace(/\u001b\[[0-9;]*m/g, '');
+    assert.match(plain, /GOAL paused/);
+    assert.match(plain, /Keep the GSD project moving/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('holds GSD continuation while an OMP Goal Mode objective is active', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const actionPath = path.join(root, '.planning', '.omp-next-action.json');
+    fs.writeFileSync(actionPath, JSON.stringify({ command: '/gsd-plan-phase 2', label: 'Plan Phase 2' }));
+    const sent = [];
+    let selected = 0;
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const goal = {
+      id: 'goal_3',
+      objective: 'Run the overarching objective',
+      status: 'active',
+      tokensUsed: 1,
+      tokenBudget: 20,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      ui: { select: async () => { selected += 1; return 'Plan Phase 2'; } },
+    };
+    await pi.events.get('goal_updated')({ type: 'goal_updated', goal, state: { enabled: true, mode: 'active', goal } }, ctx);
+    await pi.commands.get('gsd-next').handler('', ctx);
+    assert.equal(selected, 0, 'Goal Mode must suppress the GSD continuation selector');
+    assert.equal(sent.at(-1).customType, 'gsd-goal-mode-active');
+    assert.match(sent.at(-1).content, /\/goal pause/);
+    assert.equal(fs.existsSync(actionPath), true, 'the pending GSD action remains available');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('reports an active Goal Mode instead of claiming idle when stopping GSD', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const sent = [];
+    let aborts = 0;
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const goal = {
+      id: 'goal_4',
+      objective: 'Keep the agent focused',
+      status: 'active',
+      tokensUsed: 0,
+      timeUsedSeconds: 0,
+      createdAt: 1,
+      updatedAt: 2,
+    };
+    const ctx = {
+      cwd: root,
+      hasUI: true,
+      isIdle: () => true,
+      abort: () => { aborts += 1; },
+      ui: {},
+    };
+    await pi.events.get('goal_updated')({ type: 'goal_updated', goal, state: { enabled: true, mode: 'active', goal } }, ctx);
+    await pi.commands.get('gsd-status').handler('--stop', ctx);
+    assert.equal(aborts, 0);
+    assert.equal(sent.at(-1).customType, 'gsd-goal-mode-active');
+    assert.match(sent.at(-1).content, /No GSD turn is currently running/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('keeps the extension loadable when a host rejects goal_updated registration', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gsd-omp-goal-legacy-'));
+  try {
+    const pi = mockPi();
+    const registerEvent = pi.on;
+    pi.on = (name, handler) => {
+      if (name === 'goal_updated') throw new Error('legacy host has no Goal Mode event');
+      return registerEvent(name, handler);
+    };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    assert.equal(pi.events.has('session_start'), true);
+    assert.equal(pi.events.has('tool_call'), true);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('routes native session controls through the existing GSD status command', async () => {
   const root = gsdProjectRoot();
   try {
