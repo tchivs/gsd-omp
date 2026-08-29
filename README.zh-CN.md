@@ -17,6 +17,18 @@
 
 本项目为第三方软件，未由 OpenGSD 背书、审查或维护。
 
+## 文档
+
+| 文档 | 用途 |
+|---|---|
+| [入门指南](docs/GETTING-STARTED.md) | 安装、校验、使用、升级与故障排查 |
+| [架构说明](docs/ARCHITECTURE.md) | 运行时边界、数据流、投影和 OMP 集成 |
+| [配置参考](docs/CONFIGURATION.md) | 环境变量、CLI 参数、清单所有权与 Goal Mode 协调 |
+| [开发指南](docs/DEVELOPMENT.md) | 本地开发、打包、host smoke 与发布流程 |
+| [测试指南](docs/TESTING.md) | 单元测试和 OMP 宿主验证说明 |
+| [贡献指南](./CONTRIBUTING.md) | 贡献、Pull Request 与文档规范 |
+| [CHANGELOG](./CHANGELOG.md) | 按版本整理的发布历史 |
+
 ## 环境要求
 
 - Node.js 24 或更高版本

@@ -16,6 +16,19 @@
 
 This project is third-party software. It is not endorsed, reviewed, or maintained by OpenGSD.
 
+
+## Documentation
+
+| Guide | Purpose |
+|---|---|
+| [Getting Started](docs/GETTING-STARTED.md) | Install, verify, use, upgrade, and troubleshoot the plugin |
+| [Architecture](docs/ARCHITECTURE.md) | Runtime boundaries, data flow, projection, and OMP integration |
+| [Configuration](docs/CONFIGURATION.md) | Environment variables, CLI flags, manifest ownership, and Goal Mode coordination |
+| [Development](docs/DEVELOPMENT.md) | Local development, packaging, host smoke tests, and release workflow |
+| [Testing](docs/TESTING.md) | Unit-test and OMP host-validation guidance |
+| [Contributing](./CONTRIBUTING.md) | Contribution, pull-request, and documentation guidelines |
+| [CHANGELOG](./CHANGELOG.md) | Versioned release history |
+
 ## Requirements
 
 - Node.js 24 or newer
