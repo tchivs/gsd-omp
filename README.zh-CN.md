@@ -13,7 +13,7 @@
 
 [English](./README.md) · **简体中文**
 
-`gsd-omp` 是一个独立维护的 Oh My Pi 宿主插件，面向 [GSD 嵌入式编排系统](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md)。它通过公共 Host-Integration SDK 的协议版本 1，将 OMP 原生的扩展、命令、事件、任务与文件系统接口绑定到 GSD。
+`gsd-omp` 是一个独立维护的 Oh My Pi 宿主插件，面向 [GSD 嵌入式编排系统](https://github.com/open-gsd/gsd-core/blob/next/docs/explanation/embeddable-orchestration-system.md)。它通过公共 Host-Integration SDK 的协议版本 1，将 OMP 原生的扩展、命令、事件、任务与文件系统接口绑定到 GSD。在提供 Goal Mode 的主机上，它会把可选的目标状态同步到 GSD 状态界面，但不会接管 OMP 的 GoalRuntime。
 
 本项目为第三方软件，未由 OpenGSD 背书、审查或维护。
 

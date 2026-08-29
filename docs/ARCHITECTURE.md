@@ -3,7 +3,7 @@
 
 ## Scope
 
-This document describes the runtime architecture of `gsd-omp` v1.0.20: the installer and managed-file manifest, the GSD Embeddable Orchestration System (EoS) handshake, projection of GSD Core artifacts into an Oh My Pi (OMP) profile, the OMP extension lifecycle, localization, and the test/host-smoke boundaries. It is intended for maintainers tracing a change from the package entry point to an OMP session. It does not define GSD Core workflows or replace the authoritative command/skill content shipped by `@opengsd/gsd-core`.
+This document describes the runtime architecture of `gsd-omp`: the installer and managed-file manifest, the GSD Embeddable Orchestration System (EoS) handshake, projection of GSD Core artifacts into an Oh My Pi (OMP) profile, the OMP extension lifecycle, localization, and the test/host-smoke boundaries. It is intended for maintainers tracing a change from the package entry point to an OMP session. It does not define GSD Core workflows or replace the authoritative command/skill content shipped by `@opengsd/gsd-core`.
 
 Relevant implementation paths:
 
