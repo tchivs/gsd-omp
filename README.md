@@ -151,6 +151,7 @@ The `Ctrl+Shift+G` shortcut opens a live native status overlay. Press `e` inside
 Native task execution events, context usage, automatic compaction, retry state, and detached job settlement feed the widget and footer. Native task tracking stays internal; `/gsd-status` is the status surface.
 
 Projected skills receive OMP argument completion and session labels where their workflow has a stable argument contract. The underlying projected `SKILL.md` remains authoritative for every validation, approval, artifact, and commit gate.
+When OMP exposes Goal Mode (`goal_updated`, available in newer OMP hosts), `gsd-omp` mirrors the objective, status, and token budget in `/gsd-status`, the footer, the widget, and the live overlay. It restores the latest state from the OMP session journal at session start or reload. While an active Goal Mode objective is running, GSD continuation prompts remain pending so the two continuation loops do not compete; run `/goal pause` or `/goal drop` before `/gsd-next`. Hosts without `goal_updated` (including OMP 17) keep the rest of the GSD integration available without this optional surface.
 
 ## Verify
 

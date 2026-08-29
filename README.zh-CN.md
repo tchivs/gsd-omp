@@ -152,6 +152,7 @@ gsd-omp install
 原生任务执行事件、上下文使用量、自动压缩、自动重试和异步任务结算都会同步到 widget 与 footer。原生任务跟踪保持内部机制，用户状态入口统一为 `/gsd-status`。
 
 当 projected skill 具有稳定参数契约时，插件会提供 OMP 参数补全和 session 命名；底层 projected `SKILL.md` 仍是所有校验、批准、产物和提交门的权威来源。
+当 OMP 提供 Goal Mode 的 `goal_updated` 事件时（较新的 OMP 主机支持），`gsd-omp` 会在 `/gsd-status`、footer、widget 和实时 overlay 中同步目标、状态与 token 预算；它会在 session 启动或重新加载时从 OMP session journal 恢复最新状态。活动目标运行期间，GSD 续接提示会保持待处理，避免两个续接循环互相竞争；请先运行 `/goal pause` 或 `/goal drop`，再运行 `/gsd-next`。没有 `goal_updated` 的主机（包括 OMP 17）仍可使用其余 GSD 集成能力，只跳过这一项可选界面。
 
 ## 校验
 

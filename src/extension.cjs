@@ -354,10 +354,122 @@ module.exports = function gsdPiExtension(pi, options = {}) {
   const nativePhaseExecutions = new Map();
   const nativeRuntimeSignals = new Map();
   const nativeTaskExecutionByCall = new Map();
+  const nativeGoalStatesByContext = new WeakMap();
   const graphifyHeadByCall = new Map();
   const onboardingPromptCwds = new Set();
   const taskResultsLockWait = new Int32Array(new SharedArrayBuffer(4));
   let taskResultsLockSequence = 0;
+
+  const GOAL_STATUS_LABELS = Object.freeze({
+    active: ['执行中', 'active'],
+    paused: ['已暂停', 'paused'],
+    'budget-limited': ['预算受限', 'budget-limited'],
+    complete: ['已完成', 'complete'],
+    dropped: ['已放弃', 'dropped'],
+  });
+
+  function normalizeGoalModeState(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+    const rawGoal = value.goal;
+    if (!rawGoal || typeof rawGoal !== 'object' || Array.isArray(rawGoal)) return null;
+    const objective = typeof rawGoal.objective === 'string' ? rawGoal.objective.replace(/\s+/g, ' ').trim() : '';
+    const status = String(rawGoal.status || '').trim().toLowerCase();
+    const tokensUsed = Number(rawGoal.tokensUsed);
+    if (!objective || !status || !Number.isFinite(tokensUsed) || tokensUsed < 0) return null;
+    const tokenBudget = rawGoal.tokenBudget === undefined ? undefined : Number(rawGoal.tokenBudget);
+    if (tokenBudget !== undefined && (!Number.isFinite(tokenBudget) || tokenBudget <= 0)) return null;
+    const timeUsedSeconds = Number(rawGoal.timeUsedSeconds);
+    const updatedAt = Number(rawGoal.updatedAt);
+    return {
+      enabled: value.enabled === true,
+      mode: value.mode === 'exiting' ? 'exiting' : 'active',
+      ...(value.reason === 'completed' ? { reason: 'completed' } : {}),
+      goal: {
+        id: typeof rawGoal.id === 'string' ? rawGoal.id : '',
+        objective,
+        status,
+        tokensUsed: Math.max(0, Math.round(tokensUsed)),
+        ...(tokenBudget === undefined ? {} : { tokenBudget: Math.round(tokenBudget) }),
+        timeUsedSeconds: Number.isFinite(timeUsedSeconds) && timeUsedSeconds >= 0 ? Math.round(timeUsedSeconds) : 0,
+        ...(Number.isFinite(updatedAt) ? { updatedAt } : {}),
+      },
+    };
+  }
+
+  function rememberGoalModeState(ctx, value) {
+    if (!ctx || typeof ctx !== 'object') return null;
+    const state = normalizeGoalModeState(value);
+    nativeGoalStatesByContext.set(ctx, state);
+    return state;
+  }
+
+  function goalModeStateFromSession(ctx) {
+    const entries = ctx?.sessionManager?.getEntries?.();
+    if (!Array.isArray(entries)) return undefined;
+    for (let index = entries.length - 1; index >= 0; index -= 1) {
+      const entry = entries[index];
+      if (entry?.type !== 'mode_change') continue;
+      if (entry.mode !== 'goal' && entry.mode !== 'goal_paused') return null;
+      const state = normalizeGoalModeState({
+        enabled: entry.mode === 'goal',
+        mode: 'active',
+        goal: entry.data?.goal,
+      });
+      return state;
+    }
+    return null;
+  }
+
+  function goalModeStateFor(ctx, fallback) {
+    if (!ctx || typeof ctx !== 'object') return null;
+    if (fallback !== undefined) return rememberGoalModeState(ctx, fallback);
+    if (nativeGoalStatesByContext.has(ctx)) return nativeGoalStatesByContext.get(ctx);
+    const persisted = goalModeStateFromSession(ctx);
+    if (persisted !== undefined) {
+      nativeGoalStatesByContext.set(ctx, persisted);
+      return persisted;
+    }
+    return null;
+  }
+
+  function goalStateFromEvent(event) {
+    if (event && event.state !== undefined) return event.state;
+    if (event && Object.hasOwn(event, 'goal')) {
+      return event.goal
+        ? { enabled: event.goal.status === 'active', mode: 'active', goal: event.goal }
+        : null;
+    }
+    return undefined;
+  }
+
+  function goalModeActiveFor(ctx) {
+    const state = goalModeStateFor(ctx);
+    return state?.enabled === true && state.goal.status === 'active';
+  }
+
+  function formatGoalTokens(value) {
+    return Math.max(0, Math.round(Number(value) || 0)).toLocaleString();
+  }
+
+  function compactGoalObjective(value, width = 64) {
+    const objective = String(value || '').replace(/\s+/g, ' ').trim();
+    if (objective.length <= width) return objective;
+    return `${objective.slice(0, Math.max(1, width - 1))}…`;
+  }
+
+  function goalStatusLabel(status, chinese) {
+    const labels = GOAL_STATUS_LABELS[status];
+    return labels ? labels[chinese ? 0 : 1] : status;
+  }
+
+  function goalBudgetText(goal, chinese, compact = false) {
+    const used = formatGoalTokens(goal.tokensUsed);
+    if (goal.tokenBudget === undefined) return compact ? used : chinese ? `${used} 已用` : `${used} used`;
+    const budget = formatGoalTokens(goal.tokenBudget);
+    if (compact) return `${used}/${budget}`;
+    const remaining = formatGoalTokens(Math.max(0, goal.tokenBudget - goal.tokensUsed));
+    return chinese ? `${used}/${budget}，剩余 ${remaining}` : `${used}/${budget}, ${remaining} remaining`;
+  }
 
   function taskIdsFor(cwd) {
     const projectPath = path.resolve(cwd);
@@ -784,9 +896,24 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     }
   }
 
-  function nativeRuntimeStatusLines(ctx) {
+  function nativeGoalStatusLines(goalState, chinese) {
+    const goal = goalState?.goal;
+    if (!goal) return [];
+    const status = goalStatusLabel(goal.status, chinese);
+    const objective = compactGoalObjective(goal.objective, 96);
+    const details = chinese
+      ? `OMP 目标：${status} · ${objective}`
+      : `OMP Goal: ${status} · ${objective}`;
+    return [details, chinese
+      ? `目标预算：${goalBudgetText(goal, true)}`
+      : `Goal budget: ${goalBudgetText(goal, false)}`];
+  }
+
+  function nativeRuntimeStatusLines(ctx, goalStateOverride) {
     const chinese = usesChinese(ctx.cwd);
     const lines = [];
+    const goalState = goalModeStateFor(ctx, goalStateOverride);
+    lines.push(...nativeGoalStatusLines(goalState, chinese));
     const signal = nativeRuntimeSignalFor(ctx.cwd);
     if (signal?.kind === 'compacting') lines.push(chinese ? 'OMP 上下文维护：正在压缩。' : 'OMP context maintenance: compacting.');
     if (signal?.kind === 'retrying') lines.push(chinese ? `OMP 自动重试：第 ${signal.attempt}/${signal.maxAttempts} 次。` : `OMP auto-retry: attempt ${signal.attempt}/${signal.maxAttempts}.`);
@@ -1788,17 +1915,19 @@ module.exports = function gsdPiExtension(pi, options = {}) {
 
   const WIDGET_COLORS = Object.freeze({ danger: 31, warning: 33, accent: 36, muted: 2 });
 
-  function widgetLines(cwd) {
+  function widgetLines(cwd, goalState = null) {
     const chinese = usesChinese(cwd);
     const taskExecution = nativeTaskExecutionSnapshot(cwd);
     const activeTaskCount = Math.max(nativeTaskActivityCount(cwd), taskExecution.trackedTasks, taskExecution.activeCalls);
     const recovery = activeTaskCount ? null : nativeTaskRecovery(cwd);
     const action = activeTaskCount || recovery ? null : readNextAction(cwd);
     const state = stateSnapshot(cwd);
+    const goal = goalState?.goal || null;
+    const goalActive = goalState?.enabled === true && goal.status === 'active';
     const progress = state && !state.unreadable ? planProgress(cwd, state) : null;
     const checkpoint = !activeTaskCount && !recovery && !action ? resumableCheckpoint(cwd, state) : null;
     const hasRisks = Boolean(state?.blockers || state?.concerns);
-    if (!state && !activeTaskCount && !action && !recovery && !checkpoint) return [];
+    if (!state && !activeTaskCount && !action && !recovery && !checkpoint && !goal) return [];
 
     const progressBar = (value) => {
       const width = value.bar.length;
@@ -1819,6 +1948,16 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const progressRow = progress
       ? metric(chinese ? '计划' : 'PLANS', `${progressBar(progress)} ${progress.completed}/${progress.total}`)
       : null;
+    const goalColor = goal?.status === 'active'
+      ? WIDGET_COLORS.accent
+      : goal?.status === 'complete'
+        ? WIDGET_COLORS.accent
+        : goal?.status === 'dropped'
+          ? WIDGET_COLORS.muted
+          : WIDGET_COLORS.warning;
+    const goalRow = goal
+      ? metric(chinese ? '目标' : 'GOAL', `${widgetColor(goalColor, goalStatusLabel(goal.status, chinese))} · ${compactGoalObjective(goal.objective, 56)} · ${goalBudgetText(goal, chinese, true)}`)
+      : null;
     const recoveryCount = recovery?.failures.length || 0;
     const recoveryRow = recoveryCount
       ? widgetColor(WIDGET_COLORS.danger, chinese ? `恢复 ${recoveryCount} 个失败任务` : `RECOVERY ${recoveryCount} failed`)
@@ -1835,28 +1974,36 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       const lines = [
         header(chinese ? '状态异常' : 'STATE ERROR', WIDGET_COLORS.danger),
         widgetColor(WIDGET_COLORS.danger, chinese ? '状态文件无法解析' : 'STATE.md unreadable'),
-        ...[activeRow, recoveryRow].filter(Boolean),
+        ...[goalRow, activeRow, recoveryRow].filter(Boolean),
       ];
-      const command = activeTaskCount ? '/gsd-status' : recovery?.command;
+      const command = activeTaskCount ? '/gsd-status' : goalActive ? '/goal pause' : recovery?.command;
       if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
       return lines;
     }
 
-    if (!hasRisks && !activeTaskCount && !action && !recovery && !checkpoint) return [];
+    if (!hasRisks && !activeTaskCount && !action && !recovery && !checkpoint && !goal) return [];
     const status = activeTaskCount
       ? [chinese ? '执行中' : 'RUNNING', WIDGET_COLORS.accent]
       : recovery
         ? [chinese ? '需要恢复' : 'RECOVERY', WIDGET_COLORS.danger]
-        : action
-          ? [chinese ? '下一步' : 'NEXT', WIDGET_COLORS.accent]
-          : checkpoint
-            ? [chinese ? '可恢复' : 'RESUME', WIDGET_COLORS.warning]
-            : [chinese ? '需要关注' : 'ATTENTION', WIDGET_COLORS.warning];
+        : goalActive
+          ? [chinese ? '目标中' : 'GOAL', WIDGET_COLORS.accent]
+          : action
+            ? [chinese ? '下一步' : 'NEXT', WIDGET_COLORS.accent]
+            : checkpoint
+              ? [chinese ? '可恢复' : 'RESUME', WIDGET_COLORS.warning]
+              : goal
+                ? [chinese ? `目标 ${goalStatusLabel(goal.status, true)}` : `GOAL ${goalStatusLabel(goal.status, false)}`, goalColor]
+                : [chinese ? '需要关注' : 'ATTENTION', WIDGET_COLORS.warning];
     const lines = [header(status[0], status[1])];
-    for (const row of [phaseRow, progressRow, [activeRow, riskRow].filter(Boolean).join(' · '), recoveryRow, checkpointRow, actionRow]) {
+    for (const row of [phaseRow, progressRow, goalRow, [activeRow, riskRow].filter(Boolean).join(' · '), recoveryRow, checkpointRow, actionRow]) {
       if (row) lines.push(row);
     }
-    const command = activeTaskCount ? '/gsd-status' : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
+    const command = goalActive
+      ? '/goal pause'
+      : activeTaskCount
+        ? '/gsd-status'
+        : recovery?.command || (checkpoint ? '/gsd-resume-work' : action?.command);
     if (command) lines.push(`  ${widgetColor(WIDGET_COLORS.muted, command)}`);
     return lines;
   }
@@ -1926,9 +2073,62 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     'gsd-command-result', 'gsd-status-summary', 'gsd-next-step', 'gsd-start-project',
     'gsd-continuation', 'gsd-continuation-deferred', 'gsd-continuation-dismissed',
     'gsd-continuation-error', 'gsd-continuation-preview', 'gsd-native-continuation',
-    'gsd-native-skill-command', 'gsd-native-tasks-active', 'gsd-native-abort', 'gsd-native-compact', 'gsd-native-session', 'gsd-projected-skill-input-error', 'gsd-ship-ready', 'gsd-resume-ready',
+    'gsd-native-skill-command', 'gsd-native-tasks-active', 'gsd-native-abort', 'gsd-native-compact', 'gsd-native-session', 'gsd-goal-mode-active', 'gsd-projected-skill-input-error', 'gsd-ship-ready', 'gsd-resume-ready',
     'gsd-workflow-advisory', 'gsd-hook-advisory',
   ]);
+  function updateStatus(ctx, goalStateOverride) {
+    if (!ctx.hasUI || !ctx.ui) return;
+    if (!isGsdProject(ctx.cwd)) {
+      ctx.ui.setWidget?.('gsd', undefined);
+      ctx.ui.setStatus?.('gsd', undefined);
+      ctx.ui.setWorkingMessage?.();
+      return;
+    }
+    const chinese = usesChinese(ctx.cwd);
+    const goalState = goalModeStateFor(ctx, goalStateOverride);
+    const goal = goalState?.goal;
+    const taskExecution = nativeTaskExecutionSnapshot(ctx.cwd);
+    const activeTaskCount = Math.max(nativeTaskActivityCount(ctx.cwd), taskExecution.trackedTasks, taskExecution.activeCalls);
+    const state = stateSnapshot(ctx.cwd);
+    const progress = state && !state.unreadable ? planProgress(ctx.cwd, state) : null;
+    const usage = contextUsageFor(ctx);
+    const signal = nativeRuntimeSignalFor(ctx.cwd);
+    const statusLabel = activeTaskCount
+      ? chinese ? '执行中' : 'RUNNING'
+      : state?.unreadable
+        ? chinese ? '状态异常' : 'STATE ERROR'
+        : state?.status
+          ? localizedStatus(state.status, ctx.cwd)
+          : chinese ? '就绪' : 'READY';
+    const statusParts = [`GSD · ${statusLabel}`];
+    if (activeTaskCount) statusParts.push(chinese ? `${activeTaskCount} 个任务` : `${activeTaskCount} task${activeTaskCount === 1 ? '' : 's'}`);
+    else if (progress) statusParts.push(`${progress.completed}/${progress.total} ${chinese ? '个计划' : 'plans'}`);
+    if (goal) {
+      const budget = goalBudgetText(goal, chinese, true);
+      statusParts.push(`${chinese ? '目标' : 'GOAL'} ${goalStatusLabel(goal.status, chinese)}${budget ? ` ${budget}` : ''}`);
+    }
+    if (signal?.kind === 'compacting') statusParts.push(chinese ? '压缩中' : 'compacting');
+    if (signal?.kind === 'retrying') statusParts.push(chinese ? `重试 ${signal.attempt}/${signal.maxAttempts}` : `retry ${signal.attempt}/${signal.maxAttempts}`);
+    if (usage) statusParts.push(`${usage.percent}% ${chinese ? '上下文' : 'context'}`);
+    const statusText = statusParts.join(' · ');
+    if (typeof ctx.ui.setWidget === 'function') ctx.ui.setWidget('gsd', widgetLines(ctx.cwd, goalState), { placement: 'aboveEditor' });
+    if (typeof ctx.ui.setStatus === 'function') {
+      const goalWarning = goal && ['paused', 'budget-limited'].includes(goal.status);
+      const statusColor = state?.unreadable || usage?.percent >= 100
+        ? 'error'
+        : usage?.percent >= 90 || signal || goalWarning
+          ? 'warning'
+          : activeTaskCount || goal?.status === 'active' ? 'accent' : 'muted';
+      const styledStatus = typeof ctx.ui.theme?.fg === 'function' ? ctx.ui.theme.fg(statusColor, statusText) : statusText;
+      ctx.ui.setStatus('gsd', styledStatus);
+    }
+    if (typeof ctx.ui.setWorkingMessage === 'function') {
+      if (signal?.kind === 'compacting') ctx.ui.setWorkingMessage(chinese ? 'GSD：正在压缩上下文' : 'GSD: compacting context');
+      else if (signal?.kind === 'retrying') ctx.ui.setWorkingMessage(chinese ? `GSD：正在自动重试（${signal.attempt}/${signal.maxAttempts}）` : `GSD: retrying (${signal.attempt}/${signal.maxAttempts})`);
+      else if (activeTaskCount) ctx.ui.setWorkingMessage(chinese ? `GSD：${activeTaskCount} 个原生任务运行中` : `GSD: ${activeTaskCount} native task${activeTaskCount === 1 ? '' : 's'} running`);
+      else ctx.ui.setWorkingMessage();
+    }
+  }
   for (const name of nativeMessageWorkflowNames) {
     nativeMessageTypes.add(`gsd-native-${name}`);
     nativeMessageTypes.add(`gsd-${name}-input-error`);
@@ -1969,55 +2169,10 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     return true;
   }
 
-  function updateStatus(ctx) {
-    if (!ctx.hasUI || !ctx.ui) return;
-    if (!isGsdProject(ctx.cwd)) {
-      ctx.ui.setWidget?.('gsd', undefined);
-      ctx.ui.setStatus?.('gsd', undefined);
-      ctx.ui.setWorkingMessage?.();
-      return;
-    }
-    const chinese = usesChinese(ctx.cwd);
-    const taskExecution = nativeTaskExecutionSnapshot(ctx.cwd);
-    const activeTaskCount = Math.max(nativeTaskActivityCount(ctx.cwd), taskExecution.trackedTasks, taskExecution.activeCalls);
-    const state = stateSnapshot(ctx.cwd);
-    const progress = state && !state.unreadable ? planProgress(ctx.cwd, state) : null;
-    const usage = contextUsageFor(ctx);
-    const signal = nativeRuntimeSignalFor(ctx.cwd);
-    const statusLabel = activeTaskCount
-      ? chinese ? '执行中' : 'RUNNING'
-      : state?.unreadable
-        ? chinese ? '状态异常' : 'STATE ERROR'
-        : state?.status
-          ? localizedStatus(state.status, ctx.cwd)
-          : chinese ? '就绪' : 'READY';
-    const statusParts = [`GSD · ${statusLabel}`];
-    if (activeTaskCount) statusParts.push(chinese ? `${activeTaskCount} 个任务` : `${activeTaskCount} task${activeTaskCount === 1 ? '' : 's'}`);
-    else if (progress) statusParts.push(`${progress.completed}/${progress.total} ${chinese ? '个计划' : 'plans'}`);
-    if (signal?.kind === 'compacting') statusParts.push(chinese ? '压缩中' : 'compacting');
-    if (signal?.kind === 'retrying') statusParts.push(chinese ? `重试 ${signal.attempt}/${signal.maxAttempts}` : `retry ${signal.attempt}/${signal.maxAttempts}`);
-    if (usage) statusParts.push(`${usage.percent}% ${chinese ? '上下文' : 'context'}`);
-    const statusText = statusParts.join(' · ');
-    if (typeof ctx.ui.setWidget === 'function') ctx.ui.setWidget('gsd', widgetLines(ctx.cwd), { placement: 'aboveEditor' });
-    if (typeof ctx.ui.setStatus === 'function') {
-      const statusColor = state?.unreadable || usage?.percent >= 100
-        ? 'error'
-        : usage?.percent >= 90 || signal
-          ? 'warning'
-          : activeTaskCount ? 'accent' : 'muted';
-      const styledStatus = typeof ctx.ui.theme?.fg === 'function' ? ctx.ui.theme.fg(statusColor, statusText) : statusText;
-      ctx.ui.setStatus('gsd', styledStatus);
-    }
-    if (typeof ctx.ui.setWorkingMessage === 'function') {
-      if (signal?.kind === 'compacting') ctx.ui.setWorkingMessage(chinese ? 'GSD：正在压缩上下文' : 'GSD: compacting context');
-      else if (signal?.kind === 'retrying') ctx.ui.setWorkingMessage(chinese ? `GSD：正在自动重试（${signal.attempt}/${signal.maxAttempts}）` : `GSD: retrying (${signal.attempt}/${signal.maxAttempts})`);
-      else if (activeTaskCount) ctx.ui.setWorkingMessage(chinese ? `GSD：${activeTaskCount} 个原生任务运行中` : `GSD: ${activeTaskCount} native task${activeTaskCount === 1 ? '' : 's'} running`);
-      else ctx.ui.setWorkingMessage();
-    }
-  }
 
   async function abortNativeOperation(ctx) {
     const chinese = usesChinese(ctx.cwd);
+    const goalActive = goalModeActiveFor(ctx);
     if (typeof ctx.abort !== 'function') {
       await pi.sendMessage({
         customType: 'gsd-native-abort',
@@ -2028,18 +2183,30 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     }
     const activeTaskCount = nativeTaskActivityCount(ctx.cwd);
     if (!activeTaskCount && typeof ctx.isIdle === 'function' && ctx.isIdle()) {
-      await pi.sendMessage({
-        customType: 'gsd-native-abort',
-        content: chinese ? '当前没有正在运行的 GSD 操作。' : 'No GSD operation is currently running.',
-        display: true,
-      }, { triggerTurn: false });
+      if (goalActive) {
+        await pi.sendMessage({
+          customType: 'gsd-goal-mode-active',
+          content: chinese
+            ? '当前没有正在运行的 GSD turn，但 OMP 目标模式仍会自动续接。请运行 /goal pause 暂停目标，再运行 /gsd-next。'
+            : 'No GSD turn is currently running, but OMP Goal Mode may continue automatically. Run /goal pause to pause the goal, then run /gsd-next.',
+          display: true,
+        }, { triggerTurn: false });
+      } else {
+        await pi.sendMessage({
+          customType: 'gsd-native-abort',
+          content: chinese ? '当前没有正在运行的 GSD 操作。' : 'No GSD operation is currently running.',
+          display: true,
+        }, { triggerTurn: false });
+      }
       return;
     }
     let confirmed = false;
     try {
       confirmed = typeof ctx.ui?.confirm === 'function' && await ctx.ui.confirm(
         chinese ? '停止当前 GSD 操作？' : 'Stop the current GSD operation?',
-        chinese ? '这会请求 OMP 中止当前 agent turn；已派发的异步任务仍会保留并继续被跟踪。' : 'This asks OMP to abort the current agent turn; already detached tasks remain tracked.',
+        goalActive
+          ? (chinese ? '这会请求 OMP 中止当前 agent turn；Goal Mode 会按 OMP 原生规则暂停当前目标，已派发的异步任务仍会保留并继续被跟踪。' : 'This asks OMP to abort the current agent turn; OMP will pause the active Goal Mode objective according to its native rules, while detached tasks remain tracked.')
+          : (chinese ? '这会请求 OMP 中止当前 agent turn；已派发的异步任务仍会保留并继续被跟踪。' : 'This asks OMP to abort the current agent turn; already detached tasks remain tracked.'),
       );
     } catch {
       confirmed = false;
@@ -2058,7 +2225,9 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       ctx.abort();
       await pi.sendMessage({
         customType: 'gsd-native-abort',
-        content: chinese ? '已请求 OMP 停止当前 GSD 操作。' : 'OMP was asked to stop the current GSD operation.',
+        content: goalActive
+          ? (chinese ? '已请求 OMP 停止当前 GSD 操作；目标模式会按 OMP 原生规则处理后续续接。' : 'OMP was asked to stop the current GSD operation; Goal Mode continuation will follow OMP native rules.')
+          : (chinese ? '已请求 OMP 停止当前 GSD 操作。' : 'OMP was asked to stop the current GSD operation.'),
         display: true,
       }, { triggerTurn: false });
     } catch {
@@ -2405,6 +2574,33 @@ module.exports = function gsdPiExtension(pi, options = {}) {
       ? `下一步：${action.label}\n命令：${action.command}\n${action.requiresFreshContext ? '需要新的 GSD session。' : ''}`
       : `Next: ${action.label}\nCommand: ${action.command}\n${action.requiresFreshContext ? 'A new GSD session is required.' : ''}`;
   }
+  function goalModeGuardContent(ctx, action) {
+    const chinese = usesChinese(ctx.cwd);
+    const goal = goalModeStateFor(ctx)?.goal;
+    const objective = compactGoalObjective(goal?.objective, 72);
+    const actionLabel = action?.label ? compactGoalObjective(action.label, 72) : '';
+    if (chinese) {
+      return [
+        `OMP 目标模式正在运行${objective ? `：${objective}` : ''}。`,
+        actionLabel ? `GSD 下一步“${actionLabel}”已保留，暂不自动执行，以避免两个续接流程竞争。` : 'GSD 自动续接暂时暂停，以避免两个续接流程竞争。',
+        '请先运行 /goal pause（或 /goal drop），然后再运行 /gsd-next。',
+      ].join('\n');
+    }
+    return [
+      `OMP Goal Mode is active${objective ? `: ${objective}` : ''}.`,
+      actionLabel ? `The GSD next action "${actionLabel}" is kept pending to avoid competing continuation loops.` : 'GSD automatic continuation is held to avoid competing continuation loops.',
+      'Run /goal pause (or /goal drop), then run /gsd-next when ready.',
+    ].join('\n');
+  }
+
+  async function emitGoalModeGuard(ctx, action) {
+    await pi.sendMessage({
+      customType: 'gsd-goal-mode-active',
+      content: goalModeGuardContent(ctx, action),
+      display: true,
+    }, { triggerTurn: false });
+  }
+
 
   function parseContinuationCommand(command) {
     const match = /^\/(?:skill:)?(gsd(?:[-:][A-Za-z0-9_-]+)?)(?:[ \t]+([^\r\n]+))?$/.exec(String(command || '').trim());
@@ -2429,6 +2625,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
 
   async function startContinuationSession(ctx, action) {
     const chinese = usesChinese(ctx.cwd);
+    if (goalModeActiveFor(ctx)) return emitGoalModeGuard(ctx, action);
     const prompt = nativeContinuationPrompt(action);
     if (!prompt) {
       await pi.sendMessage({ customType: 'gsd-continuation-error', content: chinese ? '无法安全解析待续接的 GSD 命令。' : 'The pending GSD command cannot be safely parsed.', display: true }, { triggerTurn: false });
@@ -2467,6 +2664,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
 
   async function launchPendingContinuation(ctx, action) {
     const prompt = nativeContinuationPrompt(action);
+    if (goalModeActiveFor(ctx)) return emitGoalModeGuard(ctx, action);
     if (!prompt) {
       const chinese = usesChinese(ctx.cwd);
       await pi.sendMessage({ customType: 'gsd-continuation-error', content: chinese ? '无法安全解析待续接的 GSD 命令。' : 'The pending GSD command cannot be safely parsed.', display: true }, { triggerTurn: false });
@@ -2507,6 +2705,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
 
   async function choosePendingContinuation(ctx, action) {
     const chinese = usesChinese(ctx.cwd);
+    if (goalModeActiveFor(ctx)) return emitGoalModeGuard(ctx, action);
     if (!ctx.hasUI || (!ctx.ui?.select && !ctx.ui?.askDialog)) {
       await pi.sendMessage({ customType: 'gsd-continuation', content: continuationSummary(action, chinese), display: true }, { triggerTurn: false });
       return;
@@ -2692,6 +2891,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
   }
 
   async function chooseNextAction(ctx, state) {
+    if (goalModeActiveFor(ctx)) return emitGoalModeGuard(ctx, readNextAction(ctx.cwd));
     const activeTaskCount = nativeTaskActivityCount(ctx.cwd);
     if (activeTaskCount > 0) {
       await emitNativeTasksActive(ctx, activeTaskCount);
@@ -4546,6 +4746,7 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
   pi.registerCommand('gsd-next', {
     description: 'Show or prepare the next localized GSD action.',
     handler: async (_input, ctx) => {
+      if (isGsdProject(ctx.cwd) && goalModeActiveFor(ctx)) return emitGoalModeGuard(ctx, readNextAction(ctx.cwd));
       const activeTaskCount = nativeTaskActivityCount(ctx.cwd);
       if (activeTaskCount > 0) return emitNativeTasksActive(ctx, activeTaskCount);
       const recovery = nativeTaskRecovery(ctx.cwd);
@@ -4631,20 +4832,38 @@ Execute the complete \`${commandName}\` workflow for this user-supplied command 
     const reminder = stateReminder(ctx.cwd);
     if (reminder) ctx.ui.notify(reminder, 'info');
   });
+  try {
+    pi.on('goal_updated', (event, ctx) => {
+      if (!ctx || !isGsdProject(ctx.cwd)) return;
+      const eventState = goalStateFromEvent(event);
+      if (eventState !== undefined) {
+        const state = rememberGoalModeState(ctx, eventState);
+        updateStatus(ctx, state);
+        return;
+      }
+      updateStatus(ctx);
+    });
+  } catch {
+    // OMP 17 has no goal_updated event; the rest of the extension remains active.
+  }
 
   pi.on('session_shutdown', (_event, ctx) => {
+    nativeGoalStatesByContext.delete(ctx);
     releaseGsdProjectRuntimeState(ctx.cwd);
   });
 
   pi.on('session_switch', (_event, ctx) => {
+    nativeGoalStatesByContext.delete(ctx);
     updateStatus(ctx);
   });
 
   pi.on('session_branch', (_event, ctx) => {
+    nativeGoalStatesByContext.delete(ctx);
     updateStatus(ctx);
   });
 
   pi.on('session_tree', (_event, ctx) => {
+    nativeGoalStatesByContext.delete(ctx);
     updateStatus(ctx);
   });
 
