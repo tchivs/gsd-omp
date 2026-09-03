@@ -78,16 +78,45 @@ test('removes the stale legacy CJS extension during reinstall', () => {
   }
 });
 
- test('update reports up-to-date when the local version matches the latest GitHub release', () => {
+test('update reports up-to-date when the local version matches the latest GitHub release', () => {
   const packageJson = require('../package.json');
-  const { update } = require('../bin/gsd-omp.cjs');
-  // Inject a stub instead of hitting the live GitHub API.
-  const result = update({
-    root: temporaryRoot('gsd-omp-update'),
-    latestRelease: () => ({ tag_name: `v${packageJson.version}`, tarball_url: 'https://api.github.com/repos/tchivs/gsd-omp/tarball/x' }),
-  });
-  assert.equal(result.upToDate, true);
-  assert.equal(result.current, packageJson.version);
+  const root = temporaryRoot('gsd-omp-update');
+  try {
+    install({ root });
+    // Inject a stub instead of hitting the live GitHub API.
+    const result = update({
+      root,
+      latestRelease: () => ({ tag_name: `v${packageJson.version}`, tarball_url: 'https://api.github.com/repos/tchivs/gsd-omp/tarball/x' }),
+    });
+    assert.equal(result.upToDate, true);
+    assert.equal(result.current, packageJson.version);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('refreshes a stale runtime projection when the package matches the latest release', () => {
+  const packageJson = require('../package.json');
+  const root = temporaryRoot('gsd-omp-stale-update');
+  try {
+    install({ root });
+    const manifestPath = path.join(root, '.gsd-omp-manifest.json');
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    manifest.version = '1.0.18';
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+
+    const result = update({
+      root,
+      latestRelease: () => ({ tag_name: `v${packageJson.version}` }),
+    });
+
+    assert.equal(result.updated, true);
+    assert.equal(result.from, '1.0.18');
+    assert.equal(JSON.parse(fs.readFileSync(manifestPath, 'utf8')).version, packageJson.version);
+    assert.equal(doctor({ root }).version, packageJson.version);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 test('compares semantic release versions numerically', () => {
   assert.equal(compareVersions('1.0.15', '1.0.12') > 0, true);
