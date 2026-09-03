@@ -197,9 +197,16 @@ function update({ root: rootOverride, force = false, latestRelease, json = false
   const release = typeof provider === 'function' ? provider() : null;
   const latest = normalizedReleaseVersion(release?.tag_name);
   if (!latest) throw new Error(t('cli.error.updateCheckFailed'));
+  const root = runtimeRoot(rootOverride);
+  const manifest = readManifest(root);
+  const projectionStale = manifest?.version !== packageJson.version;
   const comparison = compareVersions(latest, packageJson.version);
-  if (comparison <= 0) {
-    return { upToDate: comparison === 0, current: packageJson.version, latest, root: runtimeRoot(rootOverride) };
+  if (comparison <= 0 && !projectionStale) {
+    return { upToDate: comparison === 0, current: packageJson.version, latest, root };
+  }
+  if (comparison <= 0 && projectionStale) {
+    install({ root: rootOverride, force });
+    return { updated: true, from: manifest?.version || null, to: packageJson.version, root };
   }
   const tarball = release.tarball_url || `https://github.com/${GITHUB_REPO}/archive/refs/tags/v${latest}.tar.gz`;
   const npmArgs = ['install', '--global', tarball];
@@ -219,7 +226,7 @@ function update({ root: rootOverride, force = false, latestRelease, json = false
   if (force) installArgs.push('--force');
   const projection = spawnSync(cli, installArgs, { encoding: 'utf8', stdio: json ? ['ignore', 'ignore', 'inherit'] : 'inherit', timeout: 120000 });
   if (projection.status !== 0) throw new Error(t('cli.error.updateProjectionFailed'));
-  return { updated: true, from: packageJson.version, to: latest, root: runtimeRoot(rootOverride) };
+  return { updated: true, from: packageJson.version, to: latest, root };
 }
 
 function compareVersions(left, right) {
