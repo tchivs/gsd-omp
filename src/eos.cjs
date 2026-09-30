@@ -14,6 +14,7 @@ const OMP_AXES = Object.freeze({
     subagentToolkit: 'full',
     backgroundDispatch: true,
     isolation: 'none',
+    maxConcurrency: 1,
   }),
   modelMode: 'passive',
   hookBus: 'host',

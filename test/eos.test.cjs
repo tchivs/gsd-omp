@@ -27,4 +27,5 @@ const Eos = require('../src/eos.cjs');
   assert.equal(Eos.OMP_AXES.runtime, 'bun');
   assert.equal(Eos.OMP_AXES.effortSurface, 'none');
   assert.equal(Eos.OMP_AXES.dispatch.isolation, 'none');
+  assert.equal(Eos.OMP_AXES.dispatch.maxConcurrency, 1);
 });

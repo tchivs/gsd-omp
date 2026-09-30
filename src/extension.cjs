@@ -38,6 +38,70 @@ const GSD_CORE = path.join(ENGINE_ROOT, 'gsd-core');
 const MAX_CAPTURED_OUTPUT = 4 * 1024 * 1024;
 const OUTPUT_TRUNCATION_MARKER = '\n[… output truncated …]';
 
+/**
+ * Resolve a real Node.js interpreter for the GSD child processes.
+ *
+ * OMP ships as a single-file Bun executable, so `process.execPath` inside this
+ * extension points at `omp.bin` (hundreds of MB) — NOT at Node. Spawning
+ * `process.execPath <hook>.js` therefore boots a second copy of the whole OMP
+ * runtime per tool call instead of running an 18 KB hook script. Those copies
+ * are short-lived, so high-frequency sessions (Write/Edit/Bash) repeatedly
+ * start and stop them, peaking at ~400 MB RSS and ~1 CPU core each.
+ *
+ * Hooks, the graphify worker and the GSD Core CLI are all plain CommonJS, so
+ * they must run under Node. Resolution order:
+ *   1. GSD_NODE_BIN / OMP_NODE_BIN (explicit override)
+ *   2. the Node that owns this install when the host really is Node
+ *      (`process.execPath` is only trusted when `process.versions.node` exists
+ *      AND the basename is not a Bun single-file runtime)
+ *   3. Node shipped alongside the OMP install (PLUGIN_ROOT bin/, then PATH)
+ *   4. a small set of conventional locations
+ * Never silently return the Bun host: that is the regression this guards.
+ */
+function resolveNodeBinary() {
+  const isBunHost = typeof Bun !== 'undefined' || process.versions.bun !== undefined;
+  const explicit = [process.env.GSD_NODE_BIN, process.env.OMP_NODE_BIN].find(
+    (value) => typeof value === 'string' && value.length > 0 && fs.existsSync(value),
+  );
+  if (explicit) return explicit;
+
+  // A genuine Node host can always run its own child scripts.
+  if (!isBunHost && process.versions.node && fs.existsSync(process.execPath)) {
+    return process.execPath;
+  }
+
+  const pluginRoot = process.env.PLUGIN_ROOT || process.env.PI_PLUGIN_ROOT || '';
+  const candidates = [
+    pluginRoot ? path.join(pluginRoot, 'bin', 'node') : null,
+    process.env.OMP_NODE_PATH || null,
+    path.join(process.env.HOME || '', '.local', 'bin', 'node'),
+    '/usr/local/bin/node',
+    '/usr/bin/node',
+  ].filter(Boolean);
+
+  for (const candidate of candidates) {
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {
+      // ignore unreadable candidates and keep looking
+    }
+  }
+
+  const which = spawnSync(process.platform === 'win32' ? 'where' : 'which', ['node'], {
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  if (which.status === 0 && which.stdout.trim()) {
+    return which.stdout.trim().split(/\r?\n/)[0];
+  }
+
+  // Last resort: the Bun host still executes the CommonJS entry point, so the
+  // feature degrades instead of throwing (matching the fail-open contract).
+  return process.execPath;
+}
+
+const NODE_BINARY = resolveNodeBinary();
+
 let corePlanningPaths;
 try {
   ({ planningPaths: corePlanningPaths } = require(path.join(GSD_CORE, 'bin', 'lib', 'planning-workspace.cjs')));
@@ -209,7 +273,7 @@ function runHook(hookFile, payload, opts = {}) {
       resolve({ stdout: stdout.trim(), exitCode, timedOut });
     };
     try {
-      child = spawnChild(process.execPath, [hookPath], {
+      child = spawnChild(NODE_BINARY, [hookPath], {
         cwd: opts.cwd || process.cwd(),
         stdio: ['pipe', 'pipe', 'ignore'],
         windowsHide: true,
@@ -750,7 +814,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         head_at_build: currentHead,
         graphify_version: null,
       });
-      const child = spawn(process.execPath, [path.join(__dirname, 'gsd-graphify-worker.cjs'), JSON.stringify({
+      const child = spawn(NODE_BINARY, [path.join(__dirname, 'gsd-graphify-worker.cjs'), JSON.stringify({
         graphifyBin,
         head: currentHead,
         startedAt,
@@ -1084,7 +1148,7 @@ module.exports = function gsdPiExtension(pi, options = {}) {
         });
       };
       try {
-        child = spawn(process.execPath, cliArgs, {
+        child = spawn(NODE_BINARY, cliArgs, {
           cwd,
           env: { ...process.env, GSD_RUNTIME: 'omp', GSD_AGENTS_DIR: agentsDir },
           stdio: ['ignore', 'pipe', 'pipe'],
@@ -5006,5 +5070,7 @@ module.exports._internals = {
   getArgumentCompletions,
   buildBeforeProviderRequestHandler,
   runHook,
+  resolveNodeBinary,
+  NODE_BINARY,
 };
 
