@@ -3046,7 +3046,8 @@ OMP dispatch contract:
 - Native task completion is not a completion gate. Reconcile its \`[gsd-task-result]\` line, then require the existing SUMMARY.md, commit, merge, post-wave verification, and STATE.md updates before marking the plan complete.
 - When an isolated task reports \`merge-summary\` patches applied, treat those changes as an uncommitted handoff: inspect \`git status\` and the patch, run the required verification, then create the plan's required commit in the parent checkout. Never recreate child file edits by hand.
 - After each reconciled plan, emit exactly \`[checkpoint] phase ${phase} wave {N}/{M} plan {PLAN} complete ({P}/{Q} plans done)\`, or the corresponding \`failed\` / \`checkpoint\` status.
-- Preserve GSD's no-duplicate-work, failure, merge, and verification rules. Do not invent a separate progress UI; OMP owns native job progress and cancellation.
+- When OMP's native \`todo\` tool is available, track the run with it: before dispatching the first wave, \`init\` one phase with an item per wave (naming its plans) and one with the post-wave gates the workflow will run (for example code review, regression, verification, and phase completion). Start and finish items as the run moves; the \`[checkpoint]\` lines are status records and do not replace \`todo\`.
+- Preserve GSD's no-duplicate-work, failure, merge, and verification rules. Apart from \`todo\`, do not invent a separate progress UI; OMP owns native job progress and cancellation.
 `;
   }
 
