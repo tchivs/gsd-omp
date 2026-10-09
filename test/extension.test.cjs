@@ -1012,6 +1012,23 @@ test('blocks phase writes through symlinked planning paths and empty LSP edits',
   }
 });
 
+test('execute-phase contract asks for native todo tracking instead of forbidding it', async () => {
+  const root = gsdProjectRoot();
+  try {
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    await pi.commands.get('gsd-execute-phase').handler('2 --gaps-only', { cwd: root });
+    assert.equal(sent[0].customType, 'gsd-native-execute-phase');
+    assert.match(sent[0].content, /before dispatching the first wave, `init` one phase with an item per wave/);
+    assert.match(sent[0].content, /`\[checkpoint\]` lines are status records and do not replace `todo`/);
+    assert.doesNotMatch(sent[0].content, /Do not invent a separate progress UI/);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('keeps a duplicate task name active until every owner settles', async () => {
   const root = gsdProjectRoot();
   try {
