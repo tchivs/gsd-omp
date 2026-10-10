@@ -37,6 +37,19 @@ test('projectSkill is idempotent and uses the configured agents directory', () =
   assert.match(once, /Run gsd-demo\./);
 });
 
+test('projectSkill gives only the execute-phase skill the OMP dispatch contract', () => {
+  const context = { coreRoot: '/core', runtimeRoot: '/omp', names: [] };
+  const source = (name) => ['---', `name: ${name}`, 'description: Demo', '---', '<objective>', 'Run.', '</objective>', '<context>', 'Phase: $ARGUMENTS'].join('\n');
+  const execute = projectSkill('gsd-execute-phase', source('gsd-execute-phase'), context);
+  assert.equal(projectSkill('gsd-execute-phase', execute, context), execute);
+  assert.equal((execute.match(/<omp_dispatch>/g) || []).length, 1);
+  assert.ok(execute.indexOf('<omp_dispatch>') < execute.indexOf('<context>'));
+  assert.match(execute, /`gsd-tools query dispatch-isolation` resolves `none`/);
+  assert.match(execute, /do not set `workflow\.use_worktrees=false`/);
+  assert.match(execute, /name: "Phase\{PHASE\}Plan\{PLAN_COMPACT\}Executor"/);
+  assert.doesNotMatch(projectSkill('gsd-quick', source('gsd-quick'), context), /<omp_dispatch>/);
+});
+
 test('buildProjectedArtifacts filters and deterministically orders core artifacts', () => {
   const coreRoot = temporaryRoot('gsd-omp-projection-core');
   const runtimeRoot = '/omp-runtime';

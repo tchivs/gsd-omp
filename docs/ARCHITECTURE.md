@@ -108,6 +108,7 @@ The EoS `dispatch.isolation: 'none'` value must not be read as a request to disa
 - `gsd:<command>` references are rewritten to OMP's `gsd-<command>` command spelling.
 - Projected agents receive the OMP native orchestration guidance. The executor additionally receives the OMP task-result lifecycle line contract.
 - Projected skills receive an `<omp_runtime_cli>` block identifying the authoritative `gsd-tools.cjs` path, `GSD_RUNTIME=omp`, and the projected agents directory. Existing copies of that block are not duplicated.
+- The projected `gsd-execute-phase` skill also receives an `<omp_dispatch>` block: the same executor dispatch contract `/gsd-execute-phase` sends, so a run that reaches the workflow another way (plan-phase `--auto` advancing, `/gsd-autonomous`, a direct skill read) still dispatches executors as native `task` calls with `isolated: true`. GSD Core has no OMP runtime entry, so `gsd-tools query dispatch-isolation` resolves `none` and the workflow's isolation gate reports a fatal error; the contract tells the agent that this verdict does not apply on OMP and to skip the steps for GSD-created worktrees.
 
 The installer places the resulting files under `agents/` and `skills/` below the runtime root. The source files remain in the installed GSD Core package; projection is generated output, not a second source of truth.
 
