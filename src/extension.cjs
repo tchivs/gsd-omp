@@ -15,6 +15,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const Eos = require('./eos.cjs');
+const { ompExecuteDispatchContract } = require('./projection.cjs');
 
 // Resolve the GSD engine tree (the dir holding gsd-core/ + hooks/).
 // Works across dev (<root>/pi/gsd.cjs → <root>) and installed layouts.
@@ -3037,17 +3038,7 @@ The user explicitly selected the GSD action below. Execute it now, end-to-end, i
 
 Execute GSD phase \`${phaseCommand}\` end-to-end using the execute-phase workflow and its existing safety gates.
 
-OMP dispatch contract:
-- This OMP contract takes precedence over runtime-specific \`Agent(...)\` or \`isolation="worktree"\` directions in execute-phase: on OMP, native \`task\` with \`isolated: true\` is the only valid isolated executor dispatch. OMP declares \`dispatch.isolation: "none"\` in its EoS handshake — GSD's isolation vocabulary is harness-created (Claude) or GSD-created (Codex) worktrees, neither of which applies; OMP's isolation is its native task \`isolated: true\` primitive, so always resolve the executor-isolation step to the native-task path below, never to \`harness-worktree\`/\`orchestrator-worktree\` dispatch, and never to inline main-checkout writes.
-- Use native \`task\` for every non-interactive executor dispatch. One plan is one task; independent plans in a wave are one task batch. Never use \`irc wait\` for task completion: IRC is coordination-only. Use \`job poll\` for the spawned native runtime IDs and consume every native task result before dispatching the next wave.
-- For a wave, call native \`task\` with its batch shape: a shared top-level \`context\` and \`tasks[]\`. Each executor item has \`name: "Phase${phase}Plan{PLAN_COMPACT}Executor"\` (remove plan punctuation), \`agent: "gsd-executor"\`, the complete self-contained plan assignment in \`task\`, and \`isolated: true\`. Do not put \`agent\` at the top level and do not invent \`id\`, \`role\`, \`description\`, or \`assignment\` fields.
-- Every executor that writes repository files MUST request \`isolated: true\`. If isolated execution is unavailable, stop and report the blocked plan; never fall back to main-checkout writes or manual \`git worktree\` commands.
-- \`--interactive\` is the only sequential inline mode. All other executor work uses native task dispatch.
-- Native task completion is not a completion gate. Reconcile its \`[gsd-task-result]\` line, then require the existing SUMMARY.md, commit, merge, post-wave verification, and STATE.md updates before marking the plan complete.
-- When an isolated task reports \`merge-summary\` patches applied, treat those changes as an uncommitted handoff: inspect \`git status\` and the patch, run the required verification, then create the plan's required commit in the parent checkout. Never recreate child file edits by hand.
-- After each reconciled plan, emit exactly \`[checkpoint] phase ${phase} wave {N}/{M} plan {PLAN} complete ({P}/{Q} plans done)\`, or the corresponding \`failed\` / \`checkpoint\` status.
-- Preserve GSD's no-duplicate-work, failure, merge, and verification rules. Do not invent a separate progress UI; OMP owns native job progress and cancellation.
-`;
+${ompExecuteDispatchContract(phase)}`;
   }
 
   async function guidePhaseInput(ctx, { command, syntax, customType, choosePhase }) {

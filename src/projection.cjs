@@ -26,6 +26,28 @@ End the final report with exactly one lifecycle line, then follow OMP's terminal
 Use \`failed\` or \`cancelled\` instead of \`completed\` when the plan did not complete.
 `;
 
+const EXECUTE_PHASE_SKILL = 'gsd-execute-phase';
+
+// Shared by the `/gsd-execute-phase` command prompt and the projected execute-phase skill, so
+// every route into the workflow (the command, plan-phase auto-advance, autonomous, a skill read)
+// carries the same OMP isolation rules.
+function ompExecuteDispatchContract(phase) {
+  return `OMP dispatch contract:
+- This OMP contract takes precedence over runtime-specific \`Agent(...)\` or \`isolation="worktree"\` directions in execute-phase: on OMP, native \`task\` with \`isolated: true\` is the only valid isolated executor dispatch. OMP declares \`dispatch.isolation: "none"\` in its EoS handshake — GSD's isolation vocabulary is harness-created (Claude) or GSD-created (Codex) worktrees, neither of which applies; OMP's isolation is its native task \`isolated: true\` primitive, so always resolve the executor-isolation step to the native-task path below, never to \`harness-worktree\`/\`orchestrator-worktree\` dispatch, and never to inline main-checkout writes.
+- GSD Core has no OMP runtime entry, so \`gsd-tools query dispatch-isolation\` resolves \`none\` and the execute-phase isolation gate prints \`FATAL: runtime 'omp' declares no executor-isolation primitive\`. That verdict does not apply on OMP: do not stop on it, and do not set \`workflow.use_worktrees=false\` to get past it. Skip the steps that manage GSD-created worktrees (\`worktree.reap-orphans\`, \`worktree.base-check\`, the wave worktree manifest, \`worktree.record-agent\`, \`worktree.cleanup-wave\`): OMP creates, merges back, and removes each isolated workspace itself.
+- Use native \`task\` for every non-interactive executor dispatch. One plan is one task; independent plans in a wave are one task batch. Never use \`irc wait\` for task completion: IRC is coordination-only. Use \`job poll\` for the spawned native runtime IDs and consume every native task result before dispatching the next wave.
+- For a wave, call native \`task\` with its batch shape: a shared top-level \`context\` and \`tasks[]\`. Each executor item has \`name: "Phase${phase}Plan{PLAN_COMPACT}Executor"\` (remove plan punctuation), \`agent: "gsd-executor"\`, the complete self-contained plan assignment in \`task\`, and \`isolated: true\`. Do not put \`agent\` at the top level and do not invent \`id\`, \`role\`, \`description\`, or \`assignment\` fields.
+- Every executor that writes repository files MUST request \`isolated: true\`. If isolated execution is unavailable, stop and report the blocked plan; never fall back to main-checkout writes or manual \`git worktree\` commands.
+- \`--interactive\` is the only sequential inline mode. All other executor work uses native task dispatch.
+- Native task completion is not a completion gate. Reconcile its \`[gsd-task-result]\` line, then require the existing SUMMARY.md, commit, merge, post-wave verification, and STATE.md updates before marking the plan complete.
+- When an isolated task reports \`merge-summary\` patches applied (\`task.isolation.merge: patch\`), treat those changes as an uncommitted handoff: inspect \`git status\` and the patch, run the required verification, then create the plan's required commit in the parent checkout. Never recreate child file edits by hand. When it reports its task branch merged (\`task.isolation.merge: branch\`), the executor's own commits are already on the parent branch: check them like any executor commits and do not commit the same changes again.
+- After each reconciled plan, emit exactly \`[checkpoint] phase ${phase} wave {N}/{M} plan {PLAN} complete ({P}/{Q} plans done)\`, or the corresponding \`failed\` / \`checkpoint\` status.
+- Preserve GSD's no-duplicate-work, failure, merge, and verification rules. Do not invent a separate progress UI; OMP owns native job progress and cancellation.
+`;
+}
+
+const EXECUTE_DISPATCH_BLOCK = `<omp_dispatch>\n${ompExecuteDispatchContract('{PHASE}')}</omp_dispatch>`;
+
 function toPosix(value) {
   return value.split(path.sep).join('/');
 }
@@ -93,13 +115,15 @@ function runtimeCliBlock(coreRoot, runtimeRoot) {
 
 function projectSkill(name, content, context) {
   const rewritten = rewriteRuntimePaths(content, context);
-  const block = runtimeCliBlock(context.coreRoot, context.runtimeRoot);
-  if (rewritten.includes(block)) return rewritten;
+  const blocks = [runtimeCliBlock(context.coreRoot, context.runtimeRoot)];
+  if (name === EXECUTE_PHASE_SKILL) blocks.push(EXECUTE_DISPATCH_BLOCK);
+  const missing = blocks.filter((block) => !rewritten.includes(block));
+  if (!missing.length) return rewritten;
   const marker = ['<context>', '<process>', '<objective>'].find((candidate) => rewritten.includes(candidate));
   const frontmatterEnd = rewritten.indexOf('\n---\n', 3);
   const index = marker ? rewritten.indexOf(marker) : frontmatterEnd < 0 ? -1 : frontmatterEnd + 5;
   if (index < 0) throw new Error(`Missing insertion point in ${name}/SKILL.md`);
-  return `${rewritten.slice(0, index)}${block}\n\n${rewritten.slice(index)}`;
+  return `${rewritten.slice(0, index)}${missing.join('\n\n')}\n\n${rewritten.slice(index)}`;
 }
 
 function buildProjectedArtifacts({ coreRoot, runtimeRoot }) {
@@ -132,6 +156,7 @@ function buildProjectedArtifacts({ coreRoot, runtimeRoot }) {
 module.exports = {
   buildProjectedArtifacts,
   commandNames,
+  ompExecuteDispatchContract,
   projectAgent,
   projectSkill,
   rewriteRuntimePaths,
