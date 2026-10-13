@@ -4,7 +4,9 @@ All notable changes to `gsd-omp` are recorded here in [Keep a Changelog](https:/
 
 ## [Unreleased]
 
-No unreleased changes recorded.
+### Fixed
+
+- Stopped projecting GSD Core `agents/*.compact.md` variants into the OMP agents directory. Each variant shares its base agent's `name`, and OMP registered the compact file in place of the full agent, so most GSD subagents ran with the compact prompt even when `workflow.compact_content` was off. This matches GSD Core's own installer (`hostBehaviors.skipCompactAgents`). `gsd-omp update` removes previously projected compact files; with `workflow.compact_content` enabled, GSD Core falls back to the full agent prompt under OMP.
 
 ## [1.0.20] - 2026-08-29
 

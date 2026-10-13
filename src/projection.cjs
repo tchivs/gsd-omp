@@ -108,7 +108,10 @@ function buildProjectedArtifacts({ coreRoot, runtimeRoot }) {
   const artifacts = [];
   const agentsRoot = path.join(coreRoot, 'agents');
   for (const entry of fs.readdirSync(agentsRoot, { withFileTypes: true })) {
-    if (!entry.isFile() || !/^gsd-.*\.md$/.test(entry.name)) continue;
+    // OMP registers every agents/*.md as a task agent; a `.compact.md` variant shares its
+    // base agent's `name` and would shadow it. gsd-core's own installer skips these via
+    // hostBehaviors.skipCompactAgents for the same reason.
+    if (!entry.isFile() || !/^gsd-.*\.md$/.test(entry.name) || entry.name.endsWith('.compact.md')) continue;
     const sourcePath = path.join(agentsRoot, entry.name);
     artifacts.push({
       relativePath: path.join('agents', entry.name),

@@ -52,6 +52,10 @@ test('buildProjectedArtifacts filters and deterministically orders core artifact
       ['---', 'name: gsd-executor', 'description: Execute work', '---', 'Use ~/.claude/gsd-core.'].join('\n'),
     );
     fs.writeFileSync(
+      path.join(coreRoot, 'agents', 'gsd-executor.compact.md'),
+      ['---', 'name: gsd-executor', 'description: Execute work (compact)', '---', 'Compact body.'].join('\n'),
+    );
+    fs.writeFileSync(
       path.join(coreRoot, 'skills', 'gsd-demo', 'SKILL.md'),
       ['---', 'name: gsd-demo', 'description: Demo', '---', '<process>', 'Use gsd:a.'].join('\n'),
     );
