@@ -1012,6 +1012,30 @@ test('blocks phase writes through symlinked planning paths and empty LSP edits',
   }
 });
 
+test('does not send the read-before-edit reminder for edits to existing files', async () => {
+  const root = gsdProjectRoot();
+  // GSD's read guard stays silent under Claude Code; hide its markers so a test run from inside one still sees it.
+  const claudeMarkers = ['CLAUDECODE', 'CLAUDE_CODE_ENTRYPOINT', 'CLAUDE_CODE_SSE_PORT', 'CLAUDE_SESSION_ID'];
+  const savedEnv = Object.fromEntries(claudeMarkers.map((name) => [name, process.env[name]]));
+  for (const name of claudeMarkers) delete process.env[name];
+  try {
+    fs.writeFileSync(path.join(root, 'notes.md'), 'existing\n');
+    const sent = [];
+    const pi = mockPi();
+    pi.sendMessage = async (message) => { sent.push(message); };
+    extension(pi, { runtime: 'omp', runtimeRoot: root });
+    const ctx = { cwd: root };
+    await pi.events.get('tool_call')({ toolName: 'edit', toolCallId: 'call_edit', input: { path: 'notes.md' } }, ctx);
+    await pi.events.get('tool_call')({ toolName: 'write', toolCallId: 'call_write', input: { path: 'notes.md', content: 'new\n' } }, ctx);
+    assert.deepEqual(sent.filter((message) => /READ-BEFORE-EDIT/.test(message.content)), []);
+  } finally {
+    for (const [name, value] of Object.entries(savedEnv)) {
+      if (value !== undefined) process.env[name] = value;
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('keeps a duplicate task name active until every owner settles', async () => {
   const root = gsdProjectRoot();
   try {
