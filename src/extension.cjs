@@ -2571,8 +2571,9 @@ module.exports = function gsdPiExtension(pi, options = {}) {
     const toolInput = claudeToolInput(event?.input);
     const payload = { hook_event_name: 'PreToolUse', tool_name: toolName, tool_input: toolInput, cwd: ctx.cwd };
     const hookFiles = [];
-    if (toolName === 'Write' || toolName === 'Edit') hookFiles.push('gsd-prompt-guard.js', 'gsd-read-guard.js');
-    if (toolName === 'Write' || toolName === 'Edit') hookFiles.push('gsd-worktree-path-guard.js');
+    // No gsd-read-guard.js: it targets runtimes that reject edits to files the model has not read.
+    // OMP has no such rule, so its "the runtime will reject" reminder is wrong here and only adds noise.
+    if (toolName === 'Write' || toolName === 'Edit') hookFiles.push('gsd-prompt-guard.js', 'gsd-worktree-path-guard.js');
     if (toolName === 'Write' || toolName === 'Edit' || toolName === 'Bash') hookFiles.push('gsd-workflow-guard.js');
     const advisories = [];
     for (const hookFile of hookFiles) {
